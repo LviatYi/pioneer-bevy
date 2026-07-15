@@ -1,0 +1,4 @@
+[lfs]
+    url = https://git.lviat.com:18443/LviatYi/pioneer-bevy.git/info/lfs
+    pushurl = https://git.lviat.com:18443/LviatYi/pioneer-bevy.git/info/lfs
+    skipdownloaderrors = true
