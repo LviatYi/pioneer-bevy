@@ -1,6 +1,7 @@
 pub mod bsn_assets;
 mod movement;
 
+use crate::bsn_assets::BsnAssetsPlugin;
 use crate::bsn_assets::main_scene::main_scene;
 use crate::movement::god::{god_camera, god_movement};
 use bevy::prelude::*;
@@ -8,7 +9,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins((DefaultPlugins, BsnAssetsPlugin))
         .add_systems(
             Startup,
             (main_scene.spawn(), god_camera.spawn(), lock_cursor),
