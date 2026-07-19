@@ -7,13 +7,21 @@ Pioneer 是一个基于 Bevy 引擎开发的游戏项目。它是一个星球探
 - Stationeer
 - The Planet Crafter
 
-## 项目约定
-
-- [基础规范](docs/project-conventions.md)
-
 ## 当前技术基线
 
 - Rust 1.95.0+
 - Bevy: `0.19.0`
 - 序列化: `serde`
 - 日志: `tracing`
+
+## 项目约定 Convention
+
+- [基础规范](docs/project-conventions.md)
+
+## 目标 Target
+
+### 基建 Foundation
+
+基建描述一切基于 Bevy 引擎的基础设施。具备一定通用性，但根本上服务于 Pioneer。
+
+### 游戏玩法 Gameplay
