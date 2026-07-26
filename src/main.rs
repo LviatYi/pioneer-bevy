@@ -1,12 +1,12 @@
-mod asset_guard;
 pub mod bsn_assets;
+pub mod foundation;
 mod movement;
 
-use crate::asset_guard::GitLfsAssetGuardPlugin;
 use crate::bsn_assets::main_scene::main_scene;
 use crate::movement::god::{god_camera, god_movement};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
+use foundation::asset::asset_guard::GitLfsAssetGuardPlugin;
 
 fn main() {
     App::new()
