@@ -1,5 +1,5 @@
 use crate::grid::config::{GridConfig, cm_to_meters};
-use crate::grid::{GridConfigError, GridCoord};
+use crate::grid::{GridConfigValidationError, GridCoord};
 use bevy::math::Vec3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -8,7 +8,7 @@ pub struct Grid {
 }
 
 impl Grid {
-    pub fn new(cell_size_cm: u32) -> Result<Self, GridConfigError> {
+    pub fn new(cell_size_cm: u32) -> Result<Self, GridConfigValidationError> {
         GridConfig {
             base_cell_size_cm: cell_size_cm,
             building_cell_size_cm: cell_size_cm,
@@ -71,7 +71,7 @@ pub struct GridSet {
 }
 
 impl GridSet {
-    pub fn from_config(config: GridConfig) -> Result<Self, GridConfigError> {
+    pub fn from_config(config: GridConfig) -> Result<Self, GridConfigValidationError> {
         let config = config.validate()?;
 
         Ok(Self {
