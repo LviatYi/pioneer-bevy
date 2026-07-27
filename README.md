@@ -20,6 +20,13 @@ Pioneer 是一个基于 Bevy 引擎开发的游戏项目。它是一个星球探
 
 ## 目标 Target
 
+### 核心体验 Core Experience
+
+Pioneer 将带给玩家以下核心体验：
+
+- 网格化的星球探索与建造。
+- 光滑地形。
+
 ### 基建 Foundation
 
 基建描述一切基于 Bevy 引擎的基础设施。具备一定通用性，但根本上服务于 Pioneer。
@@ -33,3 +40,5 @@ Pioneer 是一个基于 Bevy 引擎开发的游戏项目。它是一个星球探
     - [ ] [Low]默认资产。
 
 ### 游戏玩法 Gameplay
+
+#### 基础网格系统 Base grid system
