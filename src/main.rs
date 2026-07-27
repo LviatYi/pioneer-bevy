@@ -1,5 +1,6 @@
 pub mod bsn_assets;
 pub mod foundation;
+pub mod grid;
 mod movement;
 
 use crate::bsn_assets::main_scene::main_scene;

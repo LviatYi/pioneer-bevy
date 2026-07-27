@@ -1,0 +1,4 @@
+(
+    base_cell_size_cm: 5,
+    building_cell_size_cm: 50,
+)
