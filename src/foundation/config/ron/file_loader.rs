@@ -1,30 +1,17 @@
-use crate::foundation::config::{ConfigLoadError, Validate};
+use crate::foundation::config::{
+    ConfigLoadError, Validate, load_config_file, ron::RonConfigFormatError,
+    ron::RonConfigFormatLoader,
+};
 use serde::de::DeserializeOwned;
-use std::fs;
 use std::path::Path;
 
-pub fn load_ron_config<T>(path: impl AsRef<Path>) -> Result<T, ConfigLoadError<T::Error>>
+pub fn load_ron_config<T>(
+    path: impl AsRef<Path>,
+) -> Result<T, ConfigLoadError<RonConfigFormatError, T::Error>>
 where
-    T: DeserializeOwned + Validate,
+    T: DeserializeOwned + Validate + 'static,
 {
-    let path = path.as_ref();
-    let source = fs::read_to_string(path).map_err(|source| ConfigLoadError::Read {
-        path: path.to_owned(),
-        source,
-    })?;
-    let config = ron::from_str::<T>(&source).map_err(|source| ConfigLoadError::ParseRon {
-        path: path.to_owned(),
-        source,
-    })?;
-
-    config
-        .validate()
-        .map_err(|source| ConfigLoadError::Validation {
-            path: path.to_owned(),
-            source,
-        })?;
-
-    Ok(config)
+    load_config_file::<T, RonConfigFormatLoader<T>>(path)
 }
 
 #[cfg(test)]
@@ -78,7 +65,7 @@ mod tests {
 
         let error = load_ron_config::<TestConfig>(&path).unwrap_err();
 
-        assert!(matches!(error, ConfigLoadError::ParseRon { .. }));
+        assert!(matches!(error, ConfigLoadError::Format { .. }));
         std::fs::remove_file(path).ok();
     }
 

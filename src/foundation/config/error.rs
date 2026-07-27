@@ -2,8 +2,9 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum ConfigLoadError<ValidationError>
+pub enum ConfigLoadError<FormatError, ValidationError>
 where
+    FormatError: std::error::Error + Send + Sync + 'static,
     ValidationError: std::error::Error + Send + Sync + 'static,
 {
     #[error("failed to read config `{path}`")]
@@ -12,11 +13,11 @@ where
         #[source]
         source: std::io::Error,
     },
-    #[error("failed to parse config `{path}` as RON")]
-    ParseRon {
+    #[error("failed to load config `{path}` from its storage format")]
+    Format {
         path: PathBuf,
         #[source]
-        source: ron::error::SpannedError,
+        source: FormatError,
     },
     #[error("config `{path}` failed validation")]
     Validation {

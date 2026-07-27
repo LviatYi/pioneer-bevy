@@ -1,5 +1,9 @@
-use crate::foundation::config::{ConfigLoadError, ConfigPath, Validate, load_ron_config};
+use crate::foundation::config::{
+    ConfigLoadError, ConfigPath, RonConfigFormatError, Validate, load_ron_config,
+};
 use crate::grid::GridSet;
+use bevy::prelude::Asset;
+use bevy::reflect::TypePath;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
@@ -8,7 +12,7 @@ pub const DEFAULT_BASE_CELL_SIZE_CM: u32 = 5;
 pub const DEFAULT_BUILDING_CELL_SIZE_CM: u32 = 50;
 pub const DEFAULT_GRID_CONFIG_PATH: ConfigPath = ConfigPath::new("config/grid.ron");
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Asset, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TypePath)]
 #[serde(default)]
 pub struct GridConfig {
     pub base_cell_size_cm: u32,
@@ -25,18 +29,20 @@ impl Default for GridConfig {
 }
 
 impl GridConfig {
-    pub fn load_default_ron_file() -> Result<Self, ConfigLoadError<GridConfigValidationError>> {
+    pub fn load_default_ron_file()
+    -> Result<Self, ConfigLoadError<RonConfigFormatError, GridConfigValidationError>> {
         Self::load_from_ron_file(DEFAULT_GRID_CONFIG_PATH.file_system_path())
     }
 
     pub fn load_from_ron_file(
         path: impl AsRef<Path>,
-    ) -> Result<Self, ConfigLoadError<GridConfigValidationError>> {
+    ) -> Result<Self, ConfigLoadError<RonConfigFormatError, GridConfigValidationError>> {
         load_ron_config(path)
     }
 
     pub fn validate(self) -> Result<Self, GridConfigValidationError> {
-        <Self as Validate>::validated(self)
+        <Self as Validate>::validate(&self)?;
+        Ok(self)
     }
 
     pub fn base_cell_size_meters(self) -> f32 {
@@ -102,6 +108,9 @@ pub enum GridConfigValidationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::foundation::config::RonConfigAssetPlugin;
+    use bevy::asset::AssetPlugin;
+    use bevy::prelude::*;
 
     #[test]
     fn default_config_uses_current_design_values() {
@@ -154,6 +163,16 @@ mod tests {
                 base_cell_size_cm: 6,
                 building_cell_size_cm: 50
             }
+        ));
+    }
+
+    #[test]
+    fn plugin_registers_grid_config_as_asset() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            RonConfigAssetPlugin::<GridConfig>::default(),
         ));
     }
 }
