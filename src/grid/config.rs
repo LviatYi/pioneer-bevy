@@ -1,4 +1,4 @@
-use crate::foundation::config::{ConfigLoadError, Validate, load_ron_config};
+use crate::foundation::config::{ConfigLoadError, ConfigPath, Validate, load_ron_config};
 use crate::grid::GridSet;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -6,7 +6,7 @@ use thiserror::Error;
 
 pub const DEFAULT_BASE_CELL_SIZE_CM: u32 = 5;
 pub const DEFAULT_BUILDING_CELL_SIZE_CM: u32 = 50;
-pub const DEFAULT_GRID_CONFIG_PATH: &str = "assets/config/grid.ron";
+pub const DEFAULT_GRID_CONFIG_PATH: ConfigPath = ConfigPath::new("config/grid.ron");
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
@@ -26,7 +26,7 @@ impl Default for GridConfig {
 
 impl GridConfig {
     pub fn load_default_ron_file() -> Result<Self, ConfigLoadError<GridConfigValidationError>> {
-        Self::load_from_ron_file(DEFAULT_GRID_CONFIG_PATH)
+        Self::load_from_ron_file(DEFAULT_GRID_CONFIG_PATH.file_system_path())
     }
 
     pub fn load_from_ron_file(
