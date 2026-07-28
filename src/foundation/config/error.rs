@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -9,19 +8,19 @@ where
 {
     #[error("failed to read config `{path}`")]
     Read {
-        path: PathBuf,
+        path: String,
         #[source]
         source: std::io::Error,
     },
     #[error("failed to load config `{path}` from its storage format")]
     Format {
-        path: PathBuf,
+        path: String,
         #[source]
         source: FormatError,
     },
     #[error("config `{path}` failed validation")]
     Validation {
-        path: PathBuf,
+        path: String,
         #[source]
         source: ValidationError,
     },

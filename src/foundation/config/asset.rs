@@ -1,9 +1,8 @@
-use crate::foundation::config::Validate;
+use crate::foundation::config::{ConfigLoadError, ConfigPath, Validate, load_config_bytes};
 use bevy::asset::{AssetApp, AssetLoader, LoadContext, io::Reader};
-use bevy::prelude::{App, Asset, Plugin};
+use bevy::prelude::{App, Asset, AssetServer, Commands, Handle, Plugin, Res, Resource, Startup};
 use bevy::reflect::TypePath;
 use std::marker::PhantomData;
-use thiserror::Error;
 
 pub trait ConfigFormatLoader<T>: Default + Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -38,7 +37,7 @@ where
 {
     type Asset = T;
     type Settings = ();
-    type Error = ConfigAssetLoaderError<F::Error, T::Error>;
+    type Error = ConfigLoadError<F::Error, T::Error>;
 
     async fn load(
         &self,
@@ -47,23 +46,16 @@ where
         load_context: &mut LoadContext<'_>,
     ) -> Result<Self::Asset, Self::Error> {
         let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await?;
-        let config =
-            self.format_loader
-                .load(&bytes)
-                .map_err(|source| ConfigAssetLoaderError::Format {
-                    path: load_context.path().to_string(),
-                    source,
-                })?;
-
-        config
-            .validate()
-            .map_err(|source| ConfigAssetLoaderError::Validation {
-                path: load_context.path().to_string(),
+        let path = load_context.path().to_string();
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|source| ConfigLoadError::Read {
+                path: path.clone(),
                 source,
             })?;
 
-        Ok(config)
+        load_config_bytes::<T, F>(&bytes, path)
     }
 
     fn extensions(&self) -> &[&str] {
@@ -71,45 +63,35 @@ where
     }
 }
 
-#[derive(Debug, Error)]
-pub enum ConfigAssetLoaderError<FormatError, ValidationError>
-where
-    FormatError: std::error::Error + Send + Sync + 'static,
-    ValidationError: std::error::Error + Send + Sync + 'static,
-{
-    #[error("failed to read config asset")]
-    Read(#[from] std::io::Error),
-    #[error("failed to load config asset `{path}` from its storage format")]
-    Format {
-        path: String,
-        #[source]
-        source: FormatError,
-    },
-    #[error("config asset `{path}` failed validation")]
-    Validation {
-        path: String,
-        #[source]
-        source: ValidationError,
-    },
-}
-
 pub struct ConfigAssetPlugin<T, L> {
+    path: ConfigPath,
     _marker: PhantomData<fn() -> T>,
     _loader: PhantomData<fn() -> L>,
 }
 
 impl<T, L> ConfigAssetPlugin<T, L> {
-    pub const fn new() -> Self {
+    pub const fn new(path: ConfigPath) -> Self {
         Self {
+            path,
             _marker: PhantomData,
             _loader: PhantomData,
         }
     }
 }
 
-impl<T, L> Default for ConfigAssetPlugin<T, L> {
-    fn default() -> Self {
-        Self::new()
+#[derive(Resource)]
+pub struct ConfigHandle<T: Asset> {
+    path: ConfigPath,
+    handle: Handle<T>,
+}
+
+impl<T: Asset> ConfigHandle<T> {
+    pub const fn path(&self) -> ConfigPath {
+        self.path
+    }
+
+    pub fn handle(&self) -> &Handle<T> {
+        &self.handle
     }
 }
 
@@ -119,7 +101,17 @@ where
     L: ConfigFormatLoader<T> + TypePath,
 {
     fn build(&self, app: &mut App) {
+        let path = self.path;
+
         app.init_asset::<T>()
-            .register_asset_loader(ConfigAssetLoader::<T, L>::default());
+            .register_asset_loader(ConfigAssetLoader::<T, L>::default())
+            .add_systems(
+                Startup,
+                move |mut commands: Commands, asset_server: Res<AssetServer>| {
+                    let handle = asset_server.load(path.asset_path());
+
+                    commands.insert_resource(ConfigHandle::<T> { path, handle });
+                },
+            );
     }
 }

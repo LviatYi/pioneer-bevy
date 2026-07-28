@@ -4,12 +4,13 @@ use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
 use thiserror::Error;
 
+/// Abbreviation for `ConfigAssetPlugin<T, RonConfigFormatLoader<T>>`.
+pub type RonConfigAssetPlugin<T> = ConfigAssetPlugin<T, RonConfigFormatLoader<T>>;
+
 #[derive(TypePath)]
 pub struct RonConfigFormatLoader<T> {
     _marker: PhantomData<fn() -> T>,
 }
-
-pub type RonConfigAssetPlugin<T> = ConfigAssetPlugin<T, RonConfigFormatLoader<T>>;
 
 impl<T> Default for RonConfigFormatLoader<T> {
     fn default() -> Self {

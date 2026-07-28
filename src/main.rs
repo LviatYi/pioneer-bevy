@@ -5,7 +5,7 @@ mod movement;
 
 use crate::bsn_assets::main_scene::main_scene;
 use crate::foundation::config::RonConfigAssetPlugin;
-use crate::grid::GridConfig;
+use crate::grid::{DEFAULT_GRID_CONFIG_PATH, GridConfig};
 use crate::movement::god::{god_camera, god_movement};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
@@ -15,7 +15,9 @@ fn main() {
     App::new()
         .add_plugins(GitLfsAssetGuardPlugin::default())
         .add_plugins(DefaultPlugins)
-        .add_plugins(RonConfigAssetPlugin::<GridConfig>::default())
+        .add_plugins(RonConfigAssetPlugin::<GridConfig>::new(
+            DEFAULT_GRID_CONFIG_PATH,
+        ))
         .add_systems(
             Startup,
             (main_scene.spawn(), god_camera.spawn(), lock_cursor),

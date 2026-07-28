@@ -1,11 +1,8 @@
-use crate::foundation::config::{
-    ConfigLoadError, ConfigPath, RonConfigFormatError, Validate, load_ron_config,
-};
+use crate::foundation::config::{ConfigPath, Validate};
 use crate::grid::GridSet;
 use bevy::prelude::Asset;
 use bevy::reflect::TypePath;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use thiserror::Error;
 
 pub const DEFAULT_BASE_CELL_SIZE_CM: u32 = 5;
@@ -29,17 +26,6 @@ impl Default for GridConfig {
 }
 
 impl GridConfig {
-    pub fn load_default_ron_file()
-    -> Result<Self, ConfigLoadError<RonConfigFormatError, GridConfigValidationError>> {
-        Self::load_from_ron_file(DEFAULT_GRID_CONFIG_PATH.file_system_path())
-    }
-
-    pub fn load_from_ron_file(
-        path: impl AsRef<Path>,
-    ) -> Result<Self, ConfigLoadError<RonConfigFormatError, GridConfigValidationError>> {
-        load_ron_config(path)
-    }
-
     pub fn validate(self) -> Result<Self, GridConfigValidationError> {
         <Self as Validate>::validate(&self)?;
         Ok(self)
@@ -108,7 +94,9 @@ pub enum GridConfigValidationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::foundation::config::RonConfigAssetPlugin;
+    use crate::foundation::config::{
+        ConfigHandle, RonConfigAssetPlugin, RonConfigFormatLoader, load_config_bytes,
+    };
     use bevy::asset::AssetPlugin;
     use bevy::prelude::*;
 
@@ -125,8 +113,14 @@ mod tests {
 
     #[test]
     fn loads_default_grid_config_file() {
+        let bytes = std::fs::read(DEFAULT_GRID_CONFIG_PATH.file_system_path()).unwrap();
+
         assert_eq!(
-            GridConfig::load_default_ron_file().unwrap(),
+            load_config_bytes::<GridConfig, RonConfigFormatLoader<GridConfig>>(
+                &bytes,
+                DEFAULT_GRID_CONFIG_PATH.asset_path(),
+            )
+            .unwrap(),
             GridConfig::default()
         );
     }
@@ -172,7 +166,12 @@ mod tests {
         app.add_plugins((
             MinimalPlugins,
             AssetPlugin::default(),
-            RonConfigAssetPlugin::<GridConfig>::default(),
+            RonConfigAssetPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH),
         ));
+        app.update();
+
+        let handle = app.world().resource::<ConfigHandle<GridConfig>>();
+
+        assert_eq!(handle.path(), DEFAULT_GRID_CONFIG_PATH);
     }
 }
