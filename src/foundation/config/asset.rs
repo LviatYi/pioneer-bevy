@@ -1,6 +1,11 @@
-use crate::foundation::config::{ConfigLoadError, ConfigPath, Validate, load_config_bytes};
-use bevy::asset::{AssetApp, AssetLoader, LoadContext, io::Reader};
-use bevy::prelude::{App, Asset, AssetServer, Commands, Handle, Plugin, Res, Resource, Startup};
+use crate::foundation::config::{
+    ConfigContext, ConfigLoadError, ConfigPath, ConfigRuntimeState, Validate,
+    apply_loaded_config_runtime, load_config_bytes,
+};
+use bevy::asset::{AssetApp, AssetLoader, AssetMut, Assets, LoadContext, io::Reader};
+use bevy::prelude::{
+    App, Asset, AssetId, AssetServer, Commands, Handle, Plugin, Res, Resource, Startup, Update,
+};
 use bevy::reflect::TypePath;
 use std::marker::PhantomData;
 
@@ -93,11 +98,23 @@ impl<T: Asset> ConfigHandle<T> {
     pub fn handle(&self) -> &Handle<T> {
         &self.handle
     }
+
+    pub fn id(&self) -> AssetId<T> {
+        self.handle.id()
+    }
+
+    pub fn get<'a>(&self, assets: &'a Assets<T>) -> Option<&'a T> {
+        assets.get(self.id())
+    }
+
+    pub fn get_mut<'a>(&self, assets: &'a mut Assets<T>) -> Option<AssetMut<'a, T>> {
+        assets.get_mut(self.id())
+    }
 }
 
 impl<T, L> Plugin for ConfigAssetPlugin<T, L>
 where
-    T: Asset + Validate,
+    T: ConfigContext,
     L: ConfigFormatLoader<T> + TypePath,
 {
     fn build(&self, app: &mut App) {
@@ -105,6 +122,7 @@ where
 
         app.init_asset::<T>()
             .register_asset_loader(ConfigAssetLoader::<T, L>::default())
+            .init_resource::<ConfigRuntimeState<T>>()
             .add_systems(
                 Startup,
                 move |mut commands: Commands, asset_server: Res<AssetServer>| {
@@ -112,6 +130,7 @@ where
 
                     commands.insert_resource(ConfigHandle::<T> { path, handle });
                 },
-            );
+            )
+            .add_systems(Update, apply_loaded_config_runtime::<T>);
     }
 }

@@ -1,4 +1,4 @@
-use crate::foundation::config::{ConfigPath, Validate};
+use crate::foundation::config::{ConfigPath, ConfigRuntime, Validate};
 use crate::grid::GridSet;
 use bevy::prelude::Asset;
 use bevy::reflect::TypePath;
@@ -26,11 +26,6 @@ impl Default for GridConfig {
 }
 
 impl GridConfig {
-    pub fn validate(self) -> Result<Self, GridConfigValidationError> {
-        <Self as Validate>::validate(&self)?;
-        Ok(self)
-    }
-
     pub fn base_cell_size_meters(self) -> f32 {
         cm_to_meters(self.base_cell_size_cm)
     }
@@ -66,6 +61,15 @@ impl Validate for GridConfig {
     }
 }
 
+impl ConfigRuntime for GridConfig {
+    type Runtime = GridSet;
+    type Error = GridConfigValidationError;
+
+    fn build_runtime(&self) -> Result<Self::Runtime, Self::Error> {
+        GridSet::from_config(*self)
+    }
+}
+
 fn validate_positive(field: &'static str, value: u32) -> Result<(), GridConfigValidationError> {
     if value == 0 {
         return Err(GridConfigValidationError::CellSizeMustBePositive { field });
@@ -95,7 +99,8 @@ pub enum GridConfigValidationError {
 mod tests {
     use super::*;
     use crate::foundation::config::{
-        ConfigHandle, RonConfigAssetPlugin, RonConfigFormatLoader, load_config_bytes,
+        ConfigHandle, ConfigRuntimeState, RonConfigAssetPlugin, RonConfigFormatLoader,
+        load_config_bytes,
     };
     use bevy::asset::AssetPlugin;
     use bevy::prelude::*;
@@ -173,5 +178,66 @@ mod tests {
         let handle = app.world().resource::<ConfigHandle<GridConfig>>();
 
         assert_eq!(handle.path(), DEFAULT_GRID_CONFIG_PATH);
+    }
+
+    #[test]
+    fn config_handle_reads_registered_asset() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            RonConfigAssetPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH),
+        ));
+        app.update();
+
+        let handle = app.world().resource::<ConfigHandle<GridConfig>>();
+        let id = handle.id();
+        let assets = app.world_mut().resource_mut::<Assets<GridConfig>>();
+        assets
+            .into_inner()
+            .insert(id, GridConfig::default())
+            .unwrap();
+
+        let handle = app.world().resource::<ConfigHandle<GridConfig>>();
+        let assets = app.world().resource::<Assets<GridConfig>>();
+        assert_eq!(handle.get(assets), Some(&GridConfig::default()));
+
+        app.world_mut()
+            .resource_scope(|world, handle: Mut<ConfigHandle<GridConfig>>| {
+                let mut assets = world.resource_mut::<Assets<GridConfig>>();
+                let mut config = handle.get_mut(&mut assets).unwrap();
+                config.building_cell_size_cm = 100;
+            });
+
+        let handle = app.world().resource::<ConfigHandle<GridConfig>>();
+        let assets = app.world().resource::<Assets<GridConfig>>();
+        assert_eq!(handle.get(assets).unwrap().building_cell_size_cm, 100);
+    }
+
+    #[test]
+    fn loaded_grid_config_is_applied_as_grid_set_resource() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            RonConfigAssetPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH),
+        ));
+        app.update();
+
+        let handle = app.world().resource::<ConfigHandle<GridConfig>>();
+        let id = handle.id();
+        let assets = app.world_mut().resource_mut::<Assets<GridConfig>>();
+        assets
+            .into_inner()
+            .insert(id, GridConfig::default())
+            .unwrap();
+
+        app.update();
+
+        let grid_set = app.world().resource::<GridSet>();
+        let state = app.world().resource::<ConfigRuntimeState<GridConfig>>();
+
+        assert_eq!(grid_set.building_cell_size_in_base_cells(), 10);
+        assert!(state.is_applied());
     }
 }
