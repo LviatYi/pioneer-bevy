@@ -1,6 +1,6 @@
 use crate::foundation::config::{
-    ConfigContext, ConfigLoadError, ConfigPath, ConfigRuntimeState, Validate,
-    apply_loaded_config_runtime, load_config_bytes,
+    ConfigContext, ConfigLoadError, ConfigLoadPolicy, ConfigPath, ConfigRuntimeState, Validate,
+    apply_config_runtime, load_config_bytes,
 };
 use bevy::asset::{AssetApp, AssetLoader, AssetMut, Assets, LoadContext, io::Reader};
 use bevy::prelude::{
@@ -70,6 +70,7 @@ where
 
 pub struct ConfigAssetPlugin<T, L> {
     path: ConfigPath,
+    load_policy: ConfigLoadPolicy<T>,
     _marker: PhantomData<fn() -> T>,
     _loader: PhantomData<fn() -> L>,
 }
@@ -78,9 +79,15 @@ impl<T, L> ConfigAssetPlugin<T, L> {
     pub const fn new(path: ConfigPath) -> Self {
         Self {
             path,
+            load_policy: ConfigLoadPolicy::required(),
             _marker: PhantomData,
             _loader: PhantomData,
         }
+    }
+
+    pub const fn with_policy(mut self, load_policy: ConfigLoadPolicy<T>) -> Self {
+        self.load_policy = load_policy;
+        self
     }
 }
 
@@ -119,9 +126,11 @@ where
 {
     fn build(&self, app: &mut App) {
         let path = self.path;
+        let load_policy = self.load_policy;
 
         app.init_asset::<T>()
             .register_asset_loader(ConfigAssetLoader::<T, L>::default())
+            .insert_resource(load_policy)
             .init_resource::<ConfigRuntimeState<T>>()
             .add_systems(
                 Startup,
@@ -131,6 +140,6 @@ where
                     commands.insert_resource(ConfigHandle::<T> { path, handle });
                 },
             )
-            .add_systems(Update, apply_loaded_config_runtime::<T>);
+            .add_systems(Update, apply_config_runtime::<T>);
     }
 }

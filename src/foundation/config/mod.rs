@@ -7,7 +7,8 @@ mod ron;
 
 pub use asset::{ConfigAssetPlugin, ConfigFormatLoader, ConfigHandle};
 pub use config_context::{
-    ConfigContext, ConfigRuntime, ConfigRuntimeState, Validate, apply_loaded_config_runtime,
+    ConfigContext, ConfigLoadPolicy, ConfigRuntime, ConfigRuntimeState, ConfigRuntimeStatus,
+    ConfigSource, Validate, apply_config_runtime,
 };
 pub use error::ConfigLoadError;
 pub use path::ConfigPath;
