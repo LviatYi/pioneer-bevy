@@ -98,8 +98,8 @@ pub enum GridConfigValidationError {
 mod tests {
     use super::*;
     use crate::foundation::config::{
-        ConfigAsset, ConfigHandle, ConfigSource, ConfigState, ConfigStatus, RonConfigAssetPlugin,
-        RonConfigFormatLoader, load_validated_config_bytes,
+        ConfigAsset, ConfigHandle, ConfigSource, ConfigState, ConfigStatus, RonConfigFormatLoader,
+        RonConfigPlugin, load_validated_config_bytes,
     };
     use bevy::asset::{AssetLoadError, AssetLoadFailedEvent, AssetPlugin};
     use bevy::ecs::message::Messages;
@@ -171,7 +171,7 @@ mod tests {
         app.add_plugins((
             MinimalPlugins,
             AssetPlugin::default(),
-            RonConfigAssetPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH),
+            RonConfigPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH),
         ));
         app.update();
 
@@ -192,7 +192,7 @@ mod tests {
         app.add_plugins((
             MinimalPlugins,
             AssetPlugin::default(),
-            RonConfigAssetPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH),
+            RonConfigPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH),
         ));
         app.update();
 
@@ -228,7 +228,7 @@ mod tests {
         app.add_plugins((
             MinimalPlugins,
             AssetPlugin::default(),
-            RonConfigAssetPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH)
+            RonConfigPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH)
                 .with_validation()
                 .with_runtime()
                 .fallback_to_default(),
@@ -269,7 +269,7 @@ mod tests {
         app.add_plugins((
             MinimalPlugins,
             AssetPlugin::default(),
-            RonConfigAssetPlugin::<GridConfig>::new(MISSING_GRID_CONFIG_PATH)
+            RonConfigPlugin::<GridConfig>::new(MISSING_GRID_CONFIG_PATH)
                 .with_validation()
                 .with_runtime()
                 .fallback_to_default(),
@@ -298,6 +298,48 @@ mod tests {
 
         assert_eq!(config, &GridConfig::default());
         assert_eq!(grid_set.building_cell_size_in_base_cells(), 10);
+        assert_eq!(
+            state.status(),
+            &ConfigStatus::Resolved {
+                source: ConfigSource::DefaultFallback(MISSING_GRID_CONFIG_PATH)
+            }
+        );
+    }
+
+    #[test]
+    fn fallback_grid_config_without_runtime_resolves_grid_config_resource() {
+        const MISSING_GRID_CONFIG_PATH: ConfigPath = ConfigPath::new("config/missing-grid.ron");
+
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            RonConfigPlugin::<GridConfig>::new(MISSING_GRID_CONFIG_PATH)
+                .with_validation()
+                .fallback_to_default(),
+        ));
+        app.update();
+
+        let handle = app.world().resource::<ConfigHandle<GridConfig>>();
+        let id = handle.id();
+        app.world_mut()
+            .resource_mut::<Messages<AssetLoadFailedEvent<ConfigAsset<GridConfig>>>>()
+            .write(AssetLoadFailedEvent {
+                id,
+                path: MISSING_GRID_CONFIG_PATH.asset_path().into(),
+                error: AssetLoadError::MissingAssetLoader {
+                    asset_type_id: None,
+                    asset_path: MISSING_GRID_CONFIG_PATH.asset_path().to_owned(),
+                },
+            });
+
+        app.update();
+
+        let config = app.world().resource::<GridConfig>();
+        let state = app.world().resource::<ConfigState<GridConfig>>();
+
+        assert_eq!(config, &GridConfig::default());
+        assert!(app.world().get_resource::<ConfigState<GridSet>>().is_none());
         assert_eq!(
             state.status(),
             &ConfigStatus::Resolved {

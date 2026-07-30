@@ -205,7 +205,7 @@ pub struct NoConfigRuntime;
 #[derive(Default)]
 pub struct ApplyConfigRuntime;
 
-pub struct ConfigAssetPlugin<T, L, V = NoConfigValidation, R = NoConfigRuntime> {
+pub struct ConfigPlugin<T, L, V = NoConfigValidation, R = NoConfigRuntime> {
     path: ConfigPath,
     input_policy: ConfigInputPolicy<T>,
     _marker: PhantomData<fn() -> T>,
@@ -214,7 +214,7 @@ pub struct ConfigAssetPlugin<T, L, V = NoConfigValidation, R = NoConfigRuntime> 
     _runtime: PhantomData<fn() -> R>,
 }
 
-impl<T, L> ConfigAssetPlugin<T, L, NoConfigValidation, NoConfigRuntime> {
+impl<T, L> ConfigPlugin<T, L, NoConfigValidation, NoConfigRuntime> {
     pub const fn new(path: ConfigPath) -> Self {
         Self {
             path,
@@ -227,12 +227,12 @@ impl<T, L> ConfigAssetPlugin<T, L, NoConfigValidation, NoConfigRuntime> {
     }
 }
 
-impl<T, L, V, R> ConfigAssetPlugin<T, L, V, R> {
-    pub const fn with_validation(self) -> ConfigAssetPlugin<T, L, ValidateConfigValidation, R>
+impl<T, L, V, R> ConfigPlugin<T, L, V, R> {
+    pub const fn with_validation(self) -> ConfigPlugin<T, L, ValidateConfigValidation, R>
     where
         T: Validate,
     {
-        ConfigAssetPlugin {
+        ConfigPlugin {
             path: self.path,
             input_policy: self.input_policy,
             _marker: PhantomData,
@@ -242,11 +242,11 @@ impl<T, L, V, R> ConfigAssetPlugin<T, L, V, R> {
         }
     }
 
-    pub const fn with_runtime(self) -> ConfigAssetPlugin<T, L, V, ApplyConfigRuntime>
+    pub const fn with_runtime(self) -> ConfigPlugin<T, L, V, ApplyConfigRuntime>
     where
         T: ConfigRuntime,
     {
-        ConfigAssetPlugin {
+        ConfigPlugin {
             path: self.path,
             input_policy: self.input_policy,
             _marker: PhantomData,
@@ -266,7 +266,7 @@ impl<T, L, V, R> ConfigAssetPlugin<T, L, V, R> {
     }
 }
 
-impl<T, L, V, R> ConfigAssetPlugin<T, L, V, R>
+impl<T, L, V, R> ConfigPlugin<T, L, V, R>
 where
     T: Default,
 {
@@ -302,7 +302,7 @@ impl<T: Send + Sync + 'static> ConfigHandle<T> {
     }
 }
 
-impl<T, L, V> Plugin for ConfigAssetPlugin<T, L, V, NoConfigRuntime>
+impl<T, L, V> Plugin for ConfigPlugin<T, L, V, NoConfigRuntime>
 where
     T: Clone + Resource,
     ConfigInputPolicy<T>: Send + Sync + 'static,
@@ -317,7 +317,7 @@ where
     }
 }
 
-impl<T, L, V> Plugin for ConfigAssetPlugin<T, L, V, ApplyConfigRuntime>
+impl<T, L, V> Plugin for ConfigPlugin<T, L, V, ApplyConfigRuntime>
 where
     T: Clone + ConfigRuntime + Resource,
     ConfigInputPolicy<T>: Send + Sync + 'static,

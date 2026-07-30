@@ -1,13 +1,13 @@
 use crate::foundation::config::{
-    ConfigAssetPlugin, ConfigFormatLoader, NoConfigRuntime, NoConfigValidation,
+    ConfigFormatLoader, ConfigPlugin, NoConfigRuntime, NoConfigValidation,
 };
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
 use thiserror::Error;
 
-/// Abbreviation for `ConfigAssetPlugin<T, RonConfigFormatLoader<T>, V, R>`.
-pub type RonConfigAssetPlugin<T, V = NoConfigValidation, R = NoConfigRuntime> =
-    ConfigAssetPlugin<T, RonConfigFormatLoader<T>, V, R>;
+/// Abbreviation for `ConfigPlugin<T, RonConfigFormatLoader<T>, V, R>`.
+pub type RonConfigPlugin<T, V = NoConfigValidation, R = NoConfigRuntime> =
+    ConfigPlugin<T, RonConfigFormatLoader<T>, V, R>;
 
 pub struct RonConfigFormatLoader<T> {
     _marker: PhantomData<fn() -> T>,
