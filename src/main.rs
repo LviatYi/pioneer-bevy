@@ -4,7 +4,7 @@ pub mod grid;
 mod movement;
 
 use crate::bsn_assets::main_scene::main_scene;
-use crate::foundation::config::{ConfigLoadPolicy, RonConfigAssetPlugin};
+use crate::foundation::config::RonConfigAssetPlugin;
 use crate::grid::{DEFAULT_GRID_CONFIG_PATH, GridConfig};
 use crate::movement::god::{god_camera, god_movement};
 use bevy::prelude::*;
@@ -17,7 +17,9 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(
             RonConfigAssetPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH)
-                .with_policy(ConfigLoadPolicy::fallback_to_default()),
+                .with_validation()
+                .with_runtime()
+                .fallback_to_default(),
         )
         .add_systems(
             Startup,

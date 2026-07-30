@@ -1,7 +1,6 @@
 use crate::foundation::config::{ConfigPath, ConfigRuntime, Validate};
 use crate::grid::GridSet;
-use bevy::prelude::Asset;
-use bevy::reflect::TypePath;
+use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -9,7 +8,7 @@ pub const DEFAULT_BASE_CELL_SIZE_CM: u32 = 5;
 pub const DEFAULT_BUILDING_CELL_SIZE_CM: u32 = 50;
 pub const DEFAULT_GRID_CONFIG_PATH: ConfigPath = ConfigPath::new("config/grid.ron");
 
-#[derive(Asset, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, TypePath)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Resource, Serialize)]
 #[serde(default)]
 pub struct GridConfig {
     pub base_cell_size_cm: u32,
@@ -99,8 +98,8 @@ pub enum GridConfigValidationError {
 mod tests {
     use super::*;
     use crate::foundation::config::{
-        ConfigHandle, ConfigLoadPolicy, ConfigRuntimeState, ConfigRuntimeStatus, ConfigSource,
-        RonConfigAssetPlugin, RonConfigFormatLoader, load_config_bytes,
+        ConfigAsset, ConfigHandle, ConfigSource, ConfigState, ConfigStatus, RonConfigAssetPlugin,
+        RonConfigFormatLoader, load_validated_config_bytes,
     };
     use bevy::asset::{AssetLoadError, AssetLoadFailedEvent, AssetPlugin};
     use bevy::ecs::message::Messages;
@@ -122,7 +121,7 @@ mod tests {
         let bytes = std::fs::read(DEFAULT_GRID_CONFIG_PATH.file_system_path()).unwrap();
 
         assert_eq!(
-            load_config_bytes::<GridConfig, RonConfigFormatLoader<GridConfig>>(
+            load_validated_config_bytes::<GridConfig, RonConfigFormatLoader<GridConfig>>(
                 &bytes,
                 DEFAULT_GRID_CONFIG_PATH.asset_path(),
             )
@@ -179,6 +178,12 @@ mod tests {
         let handle = app.world().resource::<ConfigHandle<GridConfig>>();
 
         assert_eq!(handle.path(), DEFAULT_GRID_CONFIG_PATH);
+        assert!(app.world().get_resource::<ConfigState<GridSet>>().is_none());
+        assert!(
+            app.world()
+                .get_resource::<ConfigState<GridConfig>>()
+                .is_some()
+        );
     }
 
     #[test]
@@ -193,25 +198,27 @@ mod tests {
 
         let handle = app.world().resource::<ConfigHandle<GridConfig>>();
         let id = handle.id();
-        let assets = app.world_mut().resource_mut::<Assets<GridConfig>>();
+        let assets = app
+            .world_mut()
+            .resource_mut::<Assets<ConfigAsset<GridConfig>>>();
         assets
             .into_inner()
-            .insert(id, GridConfig::default())
+            .insert(id, ConfigAsset::new(GridConfig::default()))
             .unwrap();
 
         let handle = app.world().resource::<ConfigHandle<GridConfig>>();
-        let assets = app.world().resource::<Assets<GridConfig>>();
+        let assets = app.world().resource::<Assets<ConfigAsset<GridConfig>>>();
         assert_eq!(handle.get(assets), Some(&GridConfig::default()));
 
         app.world_mut()
             .resource_scope(|world, handle: Mut<ConfigHandle<GridConfig>>| {
-                let mut assets = world.resource_mut::<Assets<GridConfig>>();
+                let mut assets = world.resource_mut::<Assets<ConfigAsset<GridConfig>>>();
                 let mut config = handle.get_mut(&mut assets).unwrap();
-                config.building_cell_size_cm = 100;
+                config.value_mut().building_cell_size_cm = 100;
             });
 
         let handle = app.world().resource::<ConfigHandle<GridConfig>>();
-        let assets = app.world().resource::<Assets<GridConfig>>();
+        let assets = app.world().resource::<Assets<ConfigAsset<GridConfig>>>();
         assert_eq!(handle.get(assets).unwrap().building_cell_size_cm, 100);
     }
 
@@ -222,28 +229,33 @@ mod tests {
             MinimalPlugins,
             AssetPlugin::default(),
             RonConfigAssetPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH)
-                .with_policy(ConfigLoadPolicy::fallback_to_default()),
+                .with_validation()
+                .with_runtime()
+                .fallback_to_default(),
         ));
         app.update();
 
         let handle = app.world().resource::<ConfigHandle<GridConfig>>();
         let id = handle.id();
-        let assets = app.world_mut().resource_mut::<Assets<GridConfig>>();
+        let assets = app
+            .world_mut()
+            .resource_mut::<Assets<ConfigAsset<GridConfig>>>();
         assets
             .into_inner()
-            .insert(id, GridConfig::default())
+            .insert(id, ConfigAsset::new(GridConfig::default()))
             .unwrap();
 
         app.update();
+        app.update();
 
         let grid_set = app.world().resource::<GridSet>();
-        let state = app.world().resource::<ConfigRuntimeState<GridConfig>>();
+        let state = app.world().resource::<ConfigState<GridSet>>();
 
         assert_eq!(grid_set.building_cell_size_in_base_cells(), 10);
-        assert!(state.is_applied());
+        assert!(state.is_resolved());
         assert_eq!(
             state.status(),
-            &ConfigRuntimeStatus::Applied {
+            &ConfigStatus::Resolved {
                 source: ConfigSource::Asset(DEFAULT_GRID_CONFIG_PATH)
             }
         );
@@ -258,14 +270,16 @@ mod tests {
             MinimalPlugins,
             AssetPlugin::default(),
             RonConfigAssetPlugin::<GridConfig>::new(MISSING_GRID_CONFIG_PATH)
-                .with_policy(ConfigLoadPolicy::fallback_to_default()),
+                .with_validation()
+                .with_runtime()
+                .fallback_to_default(),
         ));
         app.update();
 
         let handle = app.world().resource::<ConfigHandle<GridConfig>>();
         let id = handle.id();
         app.world_mut()
-            .resource_mut::<Messages<AssetLoadFailedEvent<GridConfig>>>()
+            .resource_mut::<Messages<AssetLoadFailedEvent<ConfigAsset<GridConfig>>>>()
             .write(AssetLoadFailedEvent {
                 id,
                 path: MISSING_GRID_CONFIG_PATH.asset_path().into(),
@@ -276,14 +290,17 @@ mod tests {
             });
 
         app.update();
+        app.update();
 
+        let config = app.world().resource::<GridConfig>();
         let grid_set = app.world().resource::<GridSet>();
-        let state = app.world().resource::<ConfigRuntimeState<GridConfig>>();
+        let state = app.world().resource::<ConfigState<GridSet>>();
 
+        assert_eq!(config, &GridConfig::default());
         assert_eq!(grid_set.building_cell_size_in_base_cells(), 10);
         assert_eq!(
             state.status(),
-            &ConfigRuntimeStatus::Applied {
+            &ConfigStatus::Resolved {
                 source: ConfigSource::DefaultFallback(MISSING_GRID_CONFIG_PATH)
             }
         );

@@ -5,12 +5,16 @@ mod path;
 mod pipeline;
 mod ron;
 
-pub use asset::{ConfigAssetPlugin, ConfigFormatLoader, ConfigHandle};
-pub use config_context::{
-    ConfigContext, ConfigLoadPolicy, ConfigRuntime, ConfigRuntimeState, ConfigRuntimeStatus,
-    ConfigSource, Validate, apply_config_runtime,
+pub(crate) use asset::ConfigAsset;
+pub use asset::{
+    ApplyConfigRuntime, ConfigAssetPlugin, ConfigFormatLoader, ConfigHandle, ConfigValidation,
+    NoConfigRuntime, NoConfigValidation, ValidateConfigValidation,
 };
-pub use error::ConfigLoadError;
+pub use config_context::{
+    ConfigInputPolicy, ConfigRuntime, ConfigSource, ConfigState, ConfigStatus, Validate,
+};
+pub(crate) use config_context::{apply_config_runtime, resolve_config_asset};
+pub use error::{ConfigLoadError, NoConfigValidationError};
 pub use path::ConfigPath;
-pub use pipeline::load_config_bytes;
+pub use pipeline::{load_config_bytes, load_validated_config_bytes};
 pub use ron::{RonConfigAssetPlugin, RonConfigFormatError, RonConfigFormatLoader};

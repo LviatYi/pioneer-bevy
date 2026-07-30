@@ -1,14 +1,10 @@
-use crate::foundation::config::{ConfigHandle, ConfigPath};
-use bevy::asset::{Asset, AssetLoadFailedEvent, Assets};
+use crate::foundation::config::{ConfigAsset, ConfigHandle, ConfigPath};
+use bevy::asset::{AssetLoadFailedEvent, Assets};
 use bevy::prelude::{Commands, MessageReader, Res, ResMut, Resource};
 use std::marker::PhantomData;
 use tracing::warn;
 
-pub trait ConfigContext: Validate + ConfigRuntime {}
-
-impl<T> ConfigContext for T where T: Validate + ConfigRuntime {}
-
-pub trait ConfigRuntime: Asset {
+pub trait ConfigRuntime {
     type Runtime: Resource;
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -16,20 +12,20 @@ pub trait ConfigRuntime: Asset {
 }
 
 #[derive(Resource)]
-pub enum ConfigLoadPolicy<T> {
+pub enum ConfigInputPolicy<T> {
     Required,
     FallbackToDefault { default: fn() -> T },
 }
 
-impl<T> Clone for ConfigLoadPolicy<T> {
+impl<T> Copy for ConfigInputPolicy<T> {}
+
+impl<T> Clone for ConfigInputPolicy<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T> Copy for ConfigLoadPolicy<T> {}
-
-impl<T> ConfigLoadPolicy<T> {
+impl<T> ConfigInputPolicy<T> {
     pub const fn required() -> Self {
         Self::Required
     }
@@ -39,7 +35,7 @@ impl<T> ConfigLoadPolicy<T> {
     }
 }
 
-impl<T> ConfigLoadPolicy<T>
+impl<T> ConfigInputPolicy<T>
 where
     T: Default,
 {
@@ -50,15 +46,15 @@ where
     }
 }
 
-impl<T> ConfigLoadPolicy<T>
+impl<T> ConfigInputPolicy<T>
 where
-    T: ConfigRuntime,
+    T: Send + Sync + 'static,
 {
     fn handle_load_failure(
         self,
-        handle: &ConfigHandle<T>,
-        failure: &AssetLoadFailedEvent<T>,
-    ) -> (T::Runtime, ConfigSource) {
+        path: ConfigPath,
+        failure: &AssetLoadFailedEvent<ConfigAsset<T>>,
+    ) -> (T, ConfigSource) {
         match self {
             Self::Required => {
                 panic!(
@@ -73,37 +69,7 @@ where
                     "config failed to load; using default fallback"
                 );
 
-                (
-                    build_default_runtime(handle, default),
-                    ConfigSource::DefaultFallback(handle.path()),
-                )
-            }
-        }
-    }
-
-    fn handle_runtime_failure(
-        self,
-        handle: &ConfigHandle<T>,
-        error: <T as ConfigRuntime>::Error,
-    ) -> (T::Runtime, ConfigSource) {
-        match self {
-            Self::Required => {
-                panic!(
-                    "required config `{}` failed to build runtime: {error}",
-                    handle.path().asset_path()
-                );
-            }
-            Self::FallbackToDefault { default } => {
-                warn!(
-                    config_path = handle.path().asset_path(),
-                    error = %error,
-                    "config failed to build runtime; using default fallback"
-                );
-
-                (
-                    build_default_runtime(handle, default),
-                    ConfigSource::DefaultFallback(handle.path()),
-                )
+                (default(), ConfigSource::DefaultFallback(path))
             }
         }
     }
@@ -116,56 +82,62 @@ pub enum ConfigSource {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ConfigRuntimeStatus {
+pub enum ConfigStatus {
     Loading,
-    Applied { source: ConfigSource },
-    Failed { message: String },
+    Resolved { source: ConfigSource },
 }
 
 #[derive(Resource)]
-pub struct ConfigRuntimeState<T: Asset> {
-    status: ConfigRuntimeStatus,
+pub struct ConfigState<T: Send + Sync + 'static> {
+    status: ConfigStatus,
     _marker: PhantomData<fn() -> T>,
 }
 
-impl<T: Asset> Default for ConfigRuntimeState<T> {
+impl<T: Send + Sync + 'static> Default for ConfigState<T> {
     fn default() -> Self {
         Self {
-            status: ConfigRuntimeStatus::Loading,
+            status: ConfigStatus::Loading,
             _marker: PhantomData,
         }
     }
 }
 
-impl<T: Asset> ConfigRuntimeState<T> {
-    pub const fn is_applied(&self) -> bool {
-        matches!(self.status, ConfigRuntimeStatus::Applied { .. })
+impl<T: Send + Sync + 'static> ConfigState<T> {
+    pub const fn is_resolved(&self) -> bool {
+        matches!(self.status, ConfigStatus::Resolved { .. })
     }
 
-    pub const fn status(&self) -> &ConfigRuntimeStatus {
+    pub const fn status(&self) -> &ConfigStatus {
         &self.status
+    }
+
+    pub const fn source(&self) -> Option<ConfigSource> {
+        match self.status {
+            ConfigStatus::Loading => None,
+            ConfigStatus::Resolved { source } => Some(source),
+        }
     }
 }
 
-pub fn apply_config_runtime<T>(
+pub(crate) fn resolve_config_asset<T>(
     mut commands: Commands,
     handle: Res<ConfigHandle<T>>,
-    assets: Res<Assets<T>>,
-    policy: Res<ConfigLoadPolicy<T>>,
-    mut state: ResMut<ConfigRuntimeState<T>>,
-    mut failures: MessageReader<AssetLoadFailedEvent<T>>,
+    assets: Res<Assets<ConfigAsset<T>>>,
+    policy: Res<ConfigInputPolicy<T>>,
+    mut state: ResMut<ConfigState<T>>,
+    mut failures: MessageReader<AssetLoadFailedEvent<ConfigAsset<T>>>,
 ) where
-    T: ConfigContext,
+    T: Clone + Resource,
 {
-    if state.is_applied() {
+    if state.is_resolved() {
         return;
     }
 
     for failure in failures.read() {
         if failure.id == handle.id() {
-            let (runtime, source) = policy.handle_load_failure(&handle, failure);
-            commands.insert_resource(runtime);
-            state.status = ConfigRuntimeStatus::Applied { source };
+            let (config, source) = policy.handle_load_failure(handle.path(), failure);
+            commands.insert_resource(config);
+            state.status = ConfigStatus::Resolved { source };
             return;
         }
     }
@@ -174,32 +146,47 @@ pub fn apply_config_runtime<T>(
         return;
     };
 
-    let runtime = match config.build_runtime() {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            let (runtime, source) = policy.handle_runtime_failure(&handle, error);
-            commands.insert_resource(runtime);
-            state.status = ConfigRuntimeStatus::Applied { source };
-            return;
-        }
-    };
-
-    commands.insert_resource(runtime);
-    state.status = ConfigRuntimeStatus::Applied {
-        source: ConfigSource::Asset(handle.path()),
-    };
+    let source = ConfigSource::Asset(handle.path());
+    commands.insert_resource(config.clone());
+    state.status = ConfigStatus::Resolved { source };
 }
 
-fn build_default_runtime<T>(handle: &ConfigHandle<T>, default: fn() -> T) -> T::Runtime
-where
-    T: ConfigRuntime,
+pub(crate) fn apply_config_runtime<T>(
+    mut commands: Commands,
+    config: Option<Res<T>>,
+    config_state: Res<ConfigState<T>>,
+    mut state: ResMut<ConfigState<T::Runtime>>,
+) where
+    T: ConfigRuntime + Resource,
 {
-    default().build_runtime().unwrap_or_else(|error| {
+    if state.is_resolved() {
+        return;
+    }
+
+    let Some(config) = config else {
+        return;
+    };
+
+    let source = config_state
+        .source()
+        .expect("config resource exists before config state is resolved");
+    let runtime = config.build_runtime().unwrap_or_else(|error| {
         panic!(
-            "default fallback for config `{}` failed to build runtime: {error}",
-            handle.path().asset_path()
+            "config `{}` failed to build runtime: {error}",
+            source.path().asset_path()
         )
-    })
+    });
+
+    commands.insert_resource(runtime);
+    state.status = ConfigStatus::Resolved { source };
+}
+
+impl ConfigSource {
+    pub const fn path(self) -> ConfigPath {
+        match self {
+            Self::Asset(path) | Self::DefaultFallback(path) => path,
+        }
+    }
 }
 
 pub trait Validate: Sized {

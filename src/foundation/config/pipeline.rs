@@ -1,6 +1,21 @@
-use crate::foundation::config::{ConfigFormatLoader, ConfigLoadError, Validate};
+use crate::foundation::config::{
+    ConfigFormatLoader, ConfigLoadError, NoConfigValidationError, Validate,
+};
 
 pub fn load_config_bytes<T, F>(
+    bytes: &[u8],
+    path: impl Into<String>,
+) -> Result<T, ConfigLoadError<F::Error, NoConfigValidationError>>
+where
+    F: ConfigFormatLoader<T>,
+{
+    let path = path.into();
+    F::default()
+        .load(bytes)
+        .map_err(|source| ConfigLoadError::Format { path, source })
+}
+
+pub fn load_validated_config_bytes<T, F>(
     bytes: &[u8],
     path: impl Into<String>,
 ) -> Result<T, ConfigLoadError<F::Error, T::Error>>
@@ -15,7 +30,6 @@ where
             path: path.clone(),
             source,
         })?;
-
     config
         .validate()
         .map_err(|source| ConfigLoadError::Validation { path, source })?;
@@ -61,16 +75,17 @@ mod tests {
 
     #[test]
     fn reports_format_errors() {
-        let error =
-            load_config_bytes::<TestConfig, RonConfigFormatLoader<TestConfig>>(b"not ron", "test")
-                .unwrap_err();
+        let error = load_validated_config_bytes::<TestConfig, RonConfigFormatLoader<TestConfig>>(
+            b"not ron", "test",
+        )
+        .unwrap_err();
 
         assert!(matches!(error, ConfigLoadError::Format { .. }));
     }
 
     #[test]
     fn reports_validation_errors() {
-        let error = load_config_bytes::<TestConfig, RonConfigFormatLoader<TestConfig>>(
+        let error = load_validated_config_bytes::<TestConfig, RonConfigFormatLoader<TestConfig>>(
             b"(value: 0)",
             "test",
         )
@@ -81,12 +96,23 @@ mod tests {
 
     #[test]
     fn loads_valid_configs() {
-        let config = load_config_bytes::<TestConfig, RonConfigFormatLoader<TestConfig>>(
+        let config = load_validated_config_bytes::<TestConfig, RonConfigFormatLoader<TestConfig>>(
             b"(value: 7)",
             "test",
         )
         .unwrap();
 
         assert_eq!(config.value, 7);
+    }
+
+    #[test]
+    fn loads_configs_without_validation_by_default() {
+        let config = load_config_bytes::<TestConfig, RonConfigFormatLoader<TestConfig>>(
+            b"(value: 0)",
+            "test",
+        )
+        .unwrap();
+
+        assert_eq!(config.value, 0);
     }
 }

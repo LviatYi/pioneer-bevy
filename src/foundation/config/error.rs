@@ -1,6 +1,10 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[error("config validation is disabled")]
+pub struct NoConfigValidationError;
+
+#[derive(Debug, Error)]
 pub enum ConfigLoadError<FormatError, ValidationError>
 where
     FormatError: std::error::Error + Send + Sync + 'static,
