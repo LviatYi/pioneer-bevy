@@ -1,4 +1,4 @@
-use crate::foundation::config::Validate;
+use crate::foundation::config::ValidateConfig;
 use crate::grid::config::{GridConfig, cm_to_meters};
 use crate::grid::{GridConfigValidationError, GridCoord};
 use bevy::math::Vec3;

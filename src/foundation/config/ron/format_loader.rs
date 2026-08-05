@@ -1,12 +1,11 @@
-use crate::foundation::config::{
-    ConfigFormatLoader, ConfigPlugin, NoConfigRuntime, NoConfigValidation,
-};
+use crate::foundation::config::asset::WithoutRuntimeTransformer;
+use crate::foundation::config::{ConfigFormatLoader, ConfigPlugin, NoConfigValidation};
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
 use thiserror::Error;
 
 /// Abbreviation for `ConfigPlugin<T, RonConfigFormatLoader<T>, V, R>`.
-pub type RonConfigPlugin<T, V = NoConfigValidation, R = NoConfigRuntime> =
+pub type RonConfigPlugin<T, V = NoConfigValidation, R = WithoutRuntimeTransformer> =
     ConfigPlugin<T, RonConfigFormatLoader<T>, V, R>;
 
 pub struct RonConfigFormatLoader<T> {

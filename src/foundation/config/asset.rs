@@ -1,7 +1,7 @@
 use crate::foundation::config::{
-    ConfigInputPolicy, ConfigLoadError, ConfigPath, ConfigRuntime, ConfigState,
-    NoConfigValidationError, Validate, apply_config_runtime, load_config_bytes,
-    load_validated_config_bytes, resolve_config_asset,
+    ConfigLoadError, ConfigPath, ConfigState, InitialLoadPolicy, NoConfigValidationError,
+    TransformToRuntimeResourceConfig, ValidateConfig, load_config_bytes,
+    load_validated_config_bytes, resolve_config_asset, transform_config_to_runtime_resource,
 };
 use bevy::asset::{Asset, AssetApp, AssetLoader, AssetMut, Assets, LoadContext, io::Reader};
 use bevy::prelude::{
@@ -148,6 +148,8 @@ where
     }
 }
 
+//region Validation
+
 pub trait ConfigValidation<T>: Default + Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -179,11 +181,12 @@ impl<T> ConfigValidation<T> for NoConfigValidation {
 }
 
 #[derive(Default)]
-pub struct ValidateConfigValidation;
+#[doc(hidden)]
+pub struct WithValidation;
 
-impl<T> ConfigValidation<T> for ValidateConfigValidation
+impl<T> ConfigValidation<T> for WithValidation
 where
-    T: Validate,
+    T: ValidateConfig,
 {
     type Error = T::Error;
 
@@ -199,26 +202,34 @@ where
     }
 }
 
-#[derive(Default)]
-pub struct NoConfigRuntime;
+//endregion
+
+//region Runtime Transformation
 
 #[derive(Default)]
-pub struct ApplyConfigRuntime;
+#[doc(hidden)]
+pub struct WithoutRuntimeTransformer;
 
-pub struct ConfigPlugin<T, L, V = NoConfigValidation, R = NoConfigRuntime> {
+#[derive(Default)]
+#[doc(hidden)]
+pub struct WithRuntimeTransformer;
+
+//endregion
+
+pub struct ConfigPlugin<T, L, V = NoConfigValidation, R = WithoutRuntimeTransformer> {
     path: ConfigPath,
-    input_policy: ConfigInputPolicy<T>,
+    input_policy: InitialLoadPolicy<T>,
     _marker: PhantomData<fn() -> T>,
     _loader: PhantomData<fn() -> L>,
     _validation: PhantomData<fn() -> V>,
     _runtime: PhantomData<fn() -> R>,
 }
 
-impl<T, L> ConfigPlugin<T, L, NoConfigValidation, NoConfigRuntime> {
+impl<T, L> ConfigPlugin<T, L, NoConfigValidation, WithoutRuntimeTransformer> {
     pub const fn new(path: ConfigPath) -> Self {
         Self {
             path,
-            input_policy: ConfigInputPolicy::required(),
+            input_policy: InitialLoadPolicy::required(),
             _marker: PhantomData,
             _loader: PhantomData,
             _validation: PhantomData,
@@ -228,9 +239,9 @@ impl<T, L> ConfigPlugin<T, L, NoConfigValidation, NoConfigRuntime> {
 }
 
 impl<T, L, V, R> ConfigPlugin<T, L, V, R> {
-    pub const fn with_validation(self) -> ConfigPlugin<T, L, ValidateConfigValidation, R>
+    pub const fn with_validation(self) -> ConfigPlugin<T, L, WithValidation, R>
     where
-        T: Validate,
+        T: ValidateConfig,
     {
         ConfigPlugin {
             path: self.path,
@@ -242,9 +253,9 @@ impl<T, L, V, R> ConfigPlugin<T, L, V, R> {
         }
     }
 
-    pub const fn with_runtime(self) -> ConfigPlugin<T, L, V, ApplyConfigRuntime>
+    pub const fn with_runtime_transformer(self) -> ConfigPlugin<T, L, V, WithRuntimeTransformer>
     where
-        T: ConfigRuntime,
+        T: TransformToRuntimeResourceConfig,
     {
         ConfigPlugin {
             path: self.path,
@@ -256,13 +267,13 @@ impl<T, L, V, R> ConfigPlugin<T, L, V, R> {
         }
     }
 
-    pub const fn with_input_policy(mut self, input_policy: ConfigInputPolicy<T>) -> Self {
+    pub const fn with_input_policy(mut self, input_policy: InitialLoadPolicy<T>) -> Self {
         self.input_policy = input_policy;
         self
     }
 
     pub const fn fallback_with(self, default: fn() -> T) -> Self {
-        self.with_input_policy(ConfigInputPolicy::fallback_with(default))
+        self.with_input_policy(InitialLoadPolicy::fallback_with(default))
     }
 }
 
@@ -271,7 +282,7 @@ where
     T: Default,
 {
     pub fn fallback_to_default(self) -> Self {
-        self.with_input_policy(ConfigInputPolicy::fallback_to_default())
+        self.with_input_policy(InitialLoadPolicy::fallback_to_default())
     }
 }
 
@@ -302,10 +313,10 @@ impl<T: Send + Sync + 'static> ConfigHandle<T> {
     }
 }
 
-impl<T, L, V> Plugin for ConfigPlugin<T, L, V, NoConfigRuntime>
+impl<T, L, V> Plugin for ConfigPlugin<T, L, V, WithoutRuntimeTransformer>
 where
     T: Clone + Resource,
-    ConfigInputPolicy<T>: Send + Sync + 'static,
+    InitialLoadPolicy<T>: Send + Sync + 'static,
     L: ConfigFormatLoader<T>,
     V: ConfigValidation<T>,
 {
@@ -317,10 +328,10 @@ where
     }
 }
 
-impl<T, L, V> Plugin for ConfigPlugin<T, L, V, ApplyConfigRuntime>
+impl<T, L, V> Plugin for ConfigPlugin<T, L, V, WithRuntimeTransformer>
 where
-    T: Clone + ConfigRuntime + Resource,
-    ConfigInputPolicy<T>: Send + Sync + 'static,
+    T: Clone + TransformToRuntimeResourceConfig + Resource,
+    InitialLoadPolicy<T>: Send + Sync + 'static,
     L: ConfigFormatLoader<T>,
     V: ConfigValidation<T>,
 {
@@ -331,7 +342,7 @@ where
         build_config_asset_plugin_base::<T, L, V>(app, path, input_policy);
         app.init_resource::<ConfigState<T::Runtime>>().add_systems(
             Update,
-            apply_config_runtime::<T>.after(resolve_config_asset::<T>),
+            transform_config_to_runtime_resource::<T>.after(resolve_config_asset::<T>),
         );
     }
 }
@@ -339,10 +350,10 @@ where
 fn build_config_asset_plugin_base<T, L, V>(
     app: &mut App,
     path: ConfigPath,
-    input_policy: ConfigInputPolicy<T>,
+    input_policy: InitialLoadPolicy<T>,
 ) where
     T: Clone + Resource,
-    ConfigInputPolicy<T>: Send + Sync + 'static,
+    InitialLoadPolicy<T>: Send + Sync + 'static,
     L: ConfigFormatLoader<T>,
     V: ConfigValidation<T>,
 {

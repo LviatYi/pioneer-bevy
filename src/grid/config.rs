@@ -1,4 +1,4 @@
-use crate::foundation::config::{ConfigPath, ConfigRuntime, Validate};
+use crate::foundation::config::{ConfigPath, TransformToRuntimeResourceConfig, ValidateConfig};
 use crate::grid::GridSet;
 use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,7 @@ impl GridConfig {
     }
 }
 
-impl Validate for GridConfig {
+impl ValidateConfig for GridConfig {
     type Error = GridConfigValidationError;
 
     fn validate(&self) -> Result<(), Self::Error> {
@@ -60,11 +60,11 @@ impl Validate for GridConfig {
     }
 }
 
-impl ConfigRuntime for GridConfig {
+impl TransformToRuntimeResourceConfig for GridConfig {
     type Runtime = GridSet;
     type Error = GridConfigValidationError;
 
-    fn build_runtime(&self) -> Result<Self::Runtime, Self::Error> {
+    fn transform_to_runtime(&self) -> Result<Self::Runtime, Self::Error> {
         GridSet::from_config(*self)
     }
 }
@@ -223,14 +223,14 @@ mod tests {
     }
 
     #[test]
-    fn loaded_grid_config_is_applied_as_grid_set_resource() {
+    fn loaded_grid_config_is_transformed_into_grid_set_resource() {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
             AssetPlugin::default(),
             RonConfigPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH)
                 .with_validation()
-                .with_runtime()
+                .with_runtime_transformer()
                 .fallback_to_default(),
         ));
         app.update();
@@ -271,7 +271,7 @@ mod tests {
             AssetPlugin::default(),
             RonConfigPlugin::<GridConfig>::new(MISSING_GRID_CONFIG_PATH)
                 .with_validation()
-                .with_runtime()
+                .with_runtime_transformer()
                 .fallback_to_default(),
         ));
         app.update();

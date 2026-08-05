@@ -4,28 +4,28 @@ use bevy::prelude::{Commands, MessageReader, Res, ResMut, Resource};
 use std::marker::PhantomData;
 use tracing::warn;
 
-pub trait ConfigRuntime {
+pub trait TransformToRuntimeResourceConfig {
     type Runtime: Resource;
     type Error: std::error::Error + Send + Sync + 'static;
 
-    fn build_runtime(&self) -> Result<Self::Runtime, Self::Error>;
+    fn transform_to_runtime(&self) -> Result<Self::Runtime, Self::Error>;
 }
 
 #[derive(Resource)]
-pub enum ConfigInputPolicy<T> {
+pub enum InitialLoadPolicy<T> {
     Required,
     FallbackToDefault { default: fn() -> T },
 }
 
-impl<T> Copy for ConfigInputPolicy<T> {}
+impl<T> Copy for InitialLoadPolicy<T> {}
 
-impl<T> Clone for ConfigInputPolicy<T> {
+impl<T> Clone for InitialLoadPolicy<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T> ConfigInputPolicy<T> {
+impl<T> InitialLoadPolicy<T> {
     pub const fn required() -> Self {
         Self::Required
     }
@@ -35,7 +35,7 @@ impl<T> ConfigInputPolicy<T> {
     }
 }
 
-impl<T> ConfigInputPolicy<T>
+impl<T> InitialLoadPolicy<T>
 where
     T: Default,
 {
@@ -46,7 +46,7 @@ where
     }
 }
 
-impl<T> ConfigInputPolicy<T>
+impl<T> InitialLoadPolicy<T>
 where
     T: Send + Sync + 'static,
 {
@@ -123,7 +123,7 @@ pub(crate) fn resolve_config_asset<T>(
     mut commands: Commands,
     handle: Res<ConfigHandle<T>>,
     assets: Res<Assets<ConfigAsset<T>>>,
-    policy: Res<ConfigInputPolicy<T>>,
+    policy: Res<InitialLoadPolicy<T>>,
     mut state: ResMut<ConfigState<T>>,
     mut failures: MessageReader<AssetLoadFailedEvent<ConfigAsset<T>>>,
 ) where
@@ -151,13 +151,13 @@ pub(crate) fn resolve_config_asset<T>(
     state.status = ConfigStatus::Resolved { source };
 }
 
-pub(crate) fn apply_config_runtime<T>(
+pub(crate) fn transform_config_to_runtime_resource<T>(
     mut commands: Commands,
     config: Option<Res<T>>,
     config_state: Res<ConfigState<T>>,
     mut state: ResMut<ConfigState<T::Runtime>>,
 ) where
-    T: ConfigRuntime + Resource,
+    T: TransformToRuntimeResourceConfig + Resource,
 {
     if state.is_resolved() {
         return;
@@ -170,9 +170,9 @@ pub(crate) fn apply_config_runtime<T>(
     let source = config_state
         .source()
         .expect("config resource exists before config state is resolved");
-    let runtime = config.build_runtime().unwrap_or_else(|error| {
+    let runtime = config.transform_to_runtime().unwrap_or_else(|error| {
         panic!(
-            "config `{}` failed to build runtime: {error}",
+            "config `{}` failed to transform into a runtime resource: {error}",
             source.path().asset_path()
         )
     });
@@ -189,12 +189,10 @@ impl ConfigSource {
     }
 }
 
-pub trait Validate: Sized {
+pub trait ValidateConfig: Sized {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    fn validate(&self) -> Result<(), Self::Error> {
-        Ok(())
-    }
+    fn validate(&self) -> Result<(), Self::Error>;
 
     fn validated(self) -> Result<Self, Self::Error> {
         self.validate()?;

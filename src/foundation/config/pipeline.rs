@@ -1,5 +1,5 @@
 use crate::foundation::config::{
-    ConfigFormatLoader, ConfigLoadError, NoConfigValidationError, Validate,
+    ConfigFormatLoader, ConfigLoadError, NoConfigValidationError, ValidateConfig,
 };
 
 pub fn load_config_bytes<T, F>(
@@ -20,7 +20,7 @@ pub fn load_validated_config_bytes<T, F>(
     path: impl Into<String>,
 ) -> Result<T, ConfigLoadError<F::Error, T::Error>>
 where
-    T: Validate,
+    T: ValidateConfig,
     F: ConfigFormatLoader<T>,
 {
     let path = path.into();
@@ -50,7 +50,7 @@ mod tests {
         value: u32,
     }
 
-    impl Validate for TestConfig {
+    impl ValidateConfig for TestConfig {
         type Error = TestConfigValidationError;
 
         fn validate(&self) -> Result<(), Self::Error> {

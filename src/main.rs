@@ -18,7 +18,7 @@ fn main() {
         .add_plugins(
             RonConfigPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH)
                 .with_validation()
-                .with_runtime()
+                .with_runtime_transformer()
                 .fallback_to_default(),
         )
         .add_systems(
