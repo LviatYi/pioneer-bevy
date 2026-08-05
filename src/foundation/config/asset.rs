@@ -1,9 +1,11 @@
-use crate::foundation::config::{
-    ConfigLoadError, ConfigPath, ConfigState, InitialLoadPolicy, NoConfigValidationError,
-    TransformToRuntimeResourceConfig, ValidateConfig, load_config_bytes,
-    load_validated_config_bytes, resolve_config_output,
+use super::config_context::{
+    ConfigState, InitialLoadPolicy, TransformToRuntimeResourceConfig, ValidateConfig,
+    resolve_config_output,
 };
-use bevy::asset::{Asset, AssetApp, AssetLoader, AssetMut, Assets, LoadContext, io::Reader};
+use super::error::{ConfigLoadError, NoConfigValidationError};
+use super::path::ConfigPath;
+use super::pipeline::{load_config_bytes, load_validated_config_bytes};
+use bevy::asset::{Asset, AssetApp, AssetLoader, Assets, LoadContext, io::Reader};
 use bevy::prelude::{
     App, AssetId, AssetServer, Commands, Handle, Plugin, Res, Resource, Startup, Update,
 };
@@ -22,21 +24,17 @@ pub trait ConfigFormatLoader<T>: Default + Send + Sync + 'static {
 
 #[doc(hidden)]
 #[derive(Asset)]
-pub struct ConfigAsset<T: Send + Sync + 'static> {
+pub(super) struct ConfigAsset<T: Send + Sync + 'static> {
     value: T,
 }
 
 impl<T: Send + Sync + 'static> ConfigAsset<T> {
-    pub(crate) const fn new(value: T) -> Self {
+    pub(super) const fn new(value: T) -> Self {
         Self { value }
     }
 
-    pub(crate) const fn value(&self) -> &T {
+    pub(super) const fn value(&self) -> &T {
         &self.value
-    }
-
-    pub(crate) const fn value_mut(&mut self) -> &mut T {
-        &mut self.value
     }
 }
 
@@ -65,7 +63,7 @@ where
     }
 }
 
-pub struct ConfigAssetLoader<T, F, V> {
+struct ConfigAssetLoader<T, F, V> {
     format_loader: F,
     validation: V,
     _marker: PhantomData<fn() -> T>,
@@ -214,7 +212,7 @@ pub struct RawResourceOutput;
 #[doc(hidden)]
 pub struct RuntimeResourceOutput;
 
-pub(crate) trait ConfigOutput<T>: Send + Sync + 'static {
+pub(super) trait ConfigOutput<T>: Send + Sync + 'static {
     type Output: Resource;
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -320,29 +318,22 @@ where
 }
 
 #[derive(Resource)]
-pub struct ConfigHandle<T: Send + Sync + 'static> {
+pub(super) struct ConfigHandle<T: Send + Sync + 'static> {
     path: ConfigPath,
     handle: Handle<ConfigAsset<T>>,
 }
 
 impl<T: Send + Sync + 'static> ConfigHandle<T> {
-    pub const fn path(&self) -> ConfigPath {
+    pub(super) const fn path(&self) -> ConfigPath {
         self.path
     }
 
-    pub(crate) fn id(&self) -> AssetId<ConfigAsset<T>> {
+    pub(super) fn id(&self) -> AssetId<ConfigAsset<T>> {
         self.handle.id()
     }
 
-    pub(crate) fn get<'a>(&self, assets: &'a Assets<ConfigAsset<T>>) -> Option<&'a T> {
+    pub(super) fn get<'a>(&self, assets: &'a Assets<ConfigAsset<T>>) -> Option<&'a T> {
         assets.get(self.id()).map(ConfigAsset::value)
-    }
-
-    pub(crate) fn get_mut<'a>(
-        &self,
-        assets: &'a mut Assets<ConfigAsset<T>>,
-    ) -> Option<AssetMut<'a, ConfigAsset<T>>> {
-        assets.get_mut(self.id())
     }
 }
 
@@ -385,4 +376,85 @@ fn register_config_asset_source<T, L, V>(
                 commands.insert_resource(ConfigHandle::<T> { path, handle });
             },
         );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::ron::RonConfigPlugin;
+    use super::*;
+    use bevy::asset::AssetPlugin;
+    use bevy::prelude::*;
+    use serde::Deserialize;
+    use std::convert::Infallible;
+
+    const TEST_CONFIG_PATH: ConfigPath = ConfigPath::new("config/grid.ron");
+
+    #[derive(Debug, Default, Deserialize, PartialEq)]
+    struct TestConfig {
+        base_cell_size_cm: u32,
+        building_cell_size_cm: u32,
+    }
+
+    impl TransformToRuntimeResourceConfig for TestConfig {
+        type Runtime = TestRuntime;
+        type Error = Infallible;
+
+        fn transform_to_runtime(&self) -> Result<Self::Runtime, Self::Error> {
+            Ok(TestRuntime)
+        }
+    }
+
+    #[derive(Resource)]
+    struct TestRuntime;
+
+    #[test]
+    fn runtime_plugin_registers_config_asset() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            RonConfigPlugin::<TestConfig>::new(TEST_CONFIG_PATH).with_runtime_transformer(),
+        ));
+        app.update();
+
+        let handle = app.world().resource::<ConfigHandle<TestConfig>>();
+
+        assert_eq!(handle.path(), TEST_CONFIG_PATH);
+        assert!(
+            app.world()
+                .get_resource::<ConfigState<TestRuntime>>()
+                .is_some()
+        );
+        assert!(
+            app.world()
+                .get_resource::<ConfigState<TestConfig>>()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn config_handle_reads_registered_asset() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            RonConfigPlugin::<TestConfig>::new(TEST_CONFIG_PATH).with_runtime_transformer(),
+        ));
+        app.update();
+
+        let handle = app.world().resource::<ConfigHandle<TestConfig>>();
+        let id = handle.id();
+        let assets = app
+            .world_mut()
+            .resource_mut::<Assets<ConfigAsset<TestConfig>>>();
+        assets
+            .into_inner()
+            .insert(id, ConfigAsset::new(TestConfig::default()))
+            .unwrap();
+
+        let handle = app.world().resource::<ConfigHandle<TestConfig>>();
+        let assets = app.world().resource::<Assets<ConfigAsset<TestConfig>>>();
+
+        assert_eq!(handle.get(assets), Some(&TestConfig::default()));
+    }
 }

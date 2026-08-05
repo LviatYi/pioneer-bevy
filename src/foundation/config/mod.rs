@@ -5,9 +5,7 @@ mod path;
 mod pipeline;
 mod ron;
 
-pub(crate) use asset::{ConfigAsset, ConfigHandle, ConfigOutput};
 pub use asset::{ConfigFormatLoader, ConfigPlugin, ConfigValidation, NoConfigValidation};
-pub(crate) use config_context::resolve_config_output;
 pub use config_context::{
     ConfigSource, ConfigState, ConfigStatus, InitialLoadPolicy, TransformToRuntimeResourceConfig,
     ValidateConfig,

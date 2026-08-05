@@ -1,4 +1,5 @@
-use crate::foundation::config::{ConfigAsset, ConfigHandle, ConfigOutput, ConfigPath};
+use super::asset::{ConfigAsset, ConfigHandle, ConfigOutput};
+use super::path::ConfigPath;
 use bevy::asset::{AssetLoadFailedEvent, Assets};
 use bevy::prelude::{Commands, MessageReader, Res, ResMut, Resource};
 use std::marker::PhantomData;
@@ -119,7 +120,7 @@ impl<T: Send + Sync + 'static> ConfigState<T> {
     }
 }
 
-pub(crate) fn resolve_config_output<T, O>(
+pub(super) fn resolve_config_output<T, O>(
     mut commands: Commands,
     handle: Res<ConfigHandle<T>>,
     assets: Res<Assets<ConfigAsset<T>>>,
@@ -185,5 +186,169 @@ pub trait ValidateConfig: Sized {
     fn validated(self) -> Result<Self, Self::Error> {
         self.validate()?;
         Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::asset::{ConfigAsset, ConfigHandle};
+    use super::super::ron::RonConfigPlugin;
+    use super::*;
+    use bevy::asset::{AssetLoadError, AssetLoadFailedEvent, AssetPlugin};
+    use bevy::ecs::message::Messages;
+    use bevy::prelude::*;
+    use serde::Deserialize;
+    use std::convert::Infallible;
+
+    const TEST_CONFIG_PATH: ConfigPath = ConfigPath::new("config/grid.ron");
+    const MISSING_CONFIG_PATH: ConfigPath = ConfigPath::new("config/missing-config.ron");
+
+    #[derive(Debug, Default, Deserialize)]
+    struct TransformingTestConfig {
+        base_cell_size_cm: u32,
+        building_cell_size_cm: u32,
+    }
+
+    impl TransformToRuntimeResourceConfig for TransformingTestConfig {
+        type Runtime = RuntimeTestConfig;
+        type Error = Infallible;
+
+        fn transform_to_runtime(&self) -> Result<Self::Runtime, Self::Error> {
+            Ok(RuntimeTestConfig {
+                base_cells_per_building_cell: self.building_cell_size_cm / self.base_cell_size_cm,
+            })
+        }
+    }
+
+    #[derive(Debug, Eq, PartialEq, Resource)]
+    struct RuntimeTestConfig {
+        base_cells_per_building_cell: u32,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Resource)]
+    struct RawTestConfig {
+        base_cell_size_cm: u32,
+        building_cell_size_cm: u32,
+    }
+
+    #[test]
+    fn loaded_config_is_transformed_into_runtime_resource() {
+        let mut app = runtime_config_app(TEST_CONFIG_PATH);
+        app.update();
+
+        let handle = app
+            .world()
+            .resource::<ConfigHandle<TransformingTestConfig>>();
+        let id = handle.id();
+        let assets = app
+            .world_mut()
+            .resource_mut::<Assets<ConfigAsset<TransformingTestConfig>>>();
+        assets
+            .into_inner()
+            .insert(
+                id,
+                ConfigAsset::new(TransformingTestConfig {
+                    base_cell_size_cm: 5,
+                    building_cell_size_cm: 50,
+                }),
+            )
+            .unwrap();
+
+        app.update();
+
+        let runtime = app.world().resource::<RuntimeTestConfig>();
+        let state = app.world().resource::<ConfigState<RuntimeTestConfig>>();
+
+        assert_eq!(runtime.base_cells_per_building_cell, 10);
+        assert_eq!(
+            state.status(),
+            &ConfigStatus::Resolved {
+                source: ConfigSource::Asset(TEST_CONFIG_PATH)
+            }
+        );
+    }
+
+    #[test]
+    fn fallback_config_is_transformed_when_asset_load_fails() {
+        let mut app = runtime_config_app(MISSING_CONFIG_PATH);
+        app.update();
+
+        write_load_failure::<TransformingTestConfig>(&mut app);
+        app.update();
+
+        let runtime = app.world().resource::<RuntimeTestConfig>();
+        let state = app.world().resource::<ConfigState<RuntimeTestConfig>>();
+
+        assert_eq!(runtime.base_cells_per_building_cell, 10);
+        assert_eq!(
+            state.status(),
+            &ConfigStatus::Resolved {
+                source: ConfigSource::DefaultFallback(MISSING_CONFIG_PATH)
+            }
+        );
+    }
+
+    #[test]
+    fn fallback_raw_config_resolves_raw_config_resource() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            RonConfigPlugin::<RawTestConfig>::new(MISSING_CONFIG_PATH).fallback_with(|| {
+                RawTestConfig {
+                    base_cell_size_cm: 5,
+                    building_cell_size_cm: 50,
+                }
+            }),
+        ));
+        app.update();
+
+        write_load_failure::<RawTestConfig>(&mut app);
+        app.update();
+
+        let config = app.world().resource::<RawTestConfig>();
+        let state = app.world().resource::<ConfigState<RawTestConfig>>();
+
+        assert_eq!(config.base_cell_size_cm, 5);
+        assert_eq!(config.building_cell_size_cm, 50);
+        assert_eq!(
+            state.status(),
+            &ConfigStatus::Resolved {
+                source: ConfigSource::DefaultFallback(MISSING_CONFIG_PATH)
+            }
+        );
+    }
+
+    fn runtime_config_app(path: ConfigPath) -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            RonConfigPlugin::<TransformingTestConfig>::new(path)
+                .with_runtime_transformer()
+                .fallback_with(|| TransformingTestConfig {
+                    base_cell_size_cm: 5,
+                    building_cell_size_cm: 50,
+                }),
+        ));
+        app
+    }
+
+    fn write_load_failure<T>(app: &mut App)
+    where
+        T: Send + Sync + 'static,
+    {
+        let handle = app.world().resource::<ConfigHandle<T>>();
+        let id = handle.id();
+        app.world_mut()
+            .resource_mut::<Messages<AssetLoadFailedEvent<ConfigAsset<T>>>>()
+            .write(AssetLoadFailedEvent {
+                id,
+                path: MISSING_CONFIG_PATH.asset_path().into(),
+                error: AssetLoadError::MissingAssetLoader {
+                    asset_type_id: None,
+                    asset_path: MISSING_CONFIG_PATH.asset_path().to_owned(),
+                },
+            });
     }
 }

@@ -1,6 +1,6 @@
-use crate::foundation::config::{
-    ConfigFormatLoader, ConfigLoadError, NoConfigValidationError, ValidateConfig,
-};
+use super::asset::ConfigFormatLoader;
+use super::config_context::ValidateConfig;
+use super::error::{ConfigLoadError, NoConfigValidationError};
 
 pub fn load_config_bytes<T, F>(
     bytes: &[u8],
@@ -39,8 +39,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::ron::RonConfigFormatLoader;
     use super::*;
-    use crate::foundation::config::ron::RonConfigFormatLoader;
     use serde::Deserialize;
     use std::error::Error;
     use std::fmt::{Display, Formatter};

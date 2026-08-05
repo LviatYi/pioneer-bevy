@@ -1,5 +1,6 @@
-use crate::foundation::config::asset::RawResourceOutput;
-use crate::foundation::config::{ConfigFormatLoader, ConfigPlugin, NoConfigValidation};
+use super::super::asset::{
+    ConfigFormatLoader, ConfigPlugin, NoConfigValidation, RawResourceOutput,
+};
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
 use thiserror::Error;
