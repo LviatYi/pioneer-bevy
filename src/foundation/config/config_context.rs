@@ -1,4 +1,4 @@
-use crate::foundation::config::{ConfigAsset, ConfigHandle, ConfigPath};
+use crate::foundation::config::{ConfigAsset, ConfigHandle, ConfigOutput, ConfigPath};
 use bevy::asset::{AssetLoadFailedEvent, Assets};
 use bevy::prelude::{Commands, MessageReader, Res, ResMut, Resource};
 use std::marker::PhantomData;
@@ -119,15 +119,16 @@ impl<T: Send + Sync + 'static> ConfigState<T> {
     }
 }
 
-pub(crate) fn resolve_config_asset<T>(
+pub(crate) fn resolve_config_output<T, O>(
     mut commands: Commands,
     handle: Res<ConfigHandle<T>>,
     assets: Res<Assets<ConfigAsset<T>>>,
     policy: Res<InitialLoadPolicy<T>>,
-    mut state: ResMut<ConfigState<T>>,
+    mut state: ResMut<ConfigState<O::Output>>,
     mut failures: MessageReader<AssetLoadFailedEvent<ConfigAsset<T>>>,
 ) where
-    T: Clone + Resource,
+    T: Send + Sync + 'static,
+    O: ConfigOutput<T>,
 {
     if state.is_resolved() {
         return;
@@ -136,8 +137,7 @@ pub(crate) fn resolve_config_asset<T>(
     for failure in failures.read() {
         if failure.id == handle.id() {
             let (config, source) = policy.handle_load_failure(handle.path(), failure);
-            commands.insert_resource(config);
-            state.status = ConfigStatus::Resolved { source };
+            commit_config_output::<T, O>(&mut commands, &mut state, &config, source);
             return;
         }
     }
@@ -147,37 +147,25 @@ pub(crate) fn resolve_config_asset<T>(
     };
 
     let source = ConfigSource::Asset(handle.path());
-    commands.insert_resource(config.clone());
-    state.status = ConfigStatus::Resolved { source };
+    commit_config_output::<T, O>(&mut commands, &mut state, config, source);
 }
 
-pub(crate) fn transform_config_to_runtime_resource<T>(
-    mut commands: Commands,
-    config: Option<Res<T>>,
-    config_state: Res<ConfigState<T>>,
-    mut state: ResMut<ConfigState<T::Runtime>>,
+fn commit_config_output<T, O>(
+    commands: &mut Commands,
+    state: &mut ConfigState<O::Output>,
+    config: &T,
+    source: ConfigSource,
 ) where
-    T: TransformToRuntimeResourceConfig + Resource,
+    O: ConfigOutput<T>,
 {
-    if state.is_resolved() {
-        return;
-    }
-
-    let Some(config) = config else {
-        return;
-    };
-
-    let source = config_state
-        .source()
-        .expect("config resource exists before config state is resolved");
-    let runtime = config.transform_to_runtime().unwrap_or_else(|error| {
+    let output = O::produce(config).unwrap_or_else(|error| {
         panic!(
-            "config `{}` failed to transform into a runtime resource: {error}",
+            "config `{}` failed to produce its resource output: {error}",
             source.path().asset_path()
         )
     });
 
-    commands.insert_resource(runtime);
+    commands.insert_resource(output);
     state.status = ConfigStatus::Resolved { source };
 }
 

@@ -1,15 +1,15 @@
 use crate::foundation::config::{
     ConfigLoadError, ConfigPath, ConfigState, InitialLoadPolicy, NoConfigValidationError,
     TransformToRuntimeResourceConfig, ValidateConfig, load_config_bytes,
-    load_validated_config_bytes, resolve_config_asset, transform_config_to_runtime_resource,
+    load_validated_config_bytes, resolve_config_output,
 };
 use bevy::asset::{Asset, AssetApp, AssetLoader, AssetMut, Assets, LoadContext, io::Reader};
 use bevy::prelude::{
-    App, AssetId, AssetServer, Commands, Handle, IntoScheduleConfigs, Plugin, Res, Resource,
-    Startup, Update,
+    App, AssetId, AssetServer, Commands, Handle, Plugin, Res, Resource, Startup, Update,
 };
 use bevy::reflect::TypePath;
 use std::any::type_name;
+use std::convert::Infallible;
 use std::marker::PhantomData;
 
 pub trait ConfigFormatLoader<T>: Default + Send + Sync + 'static {
@@ -204,28 +204,59 @@ where
 
 //endregion
 
-//region Runtime Transformation
+//region Config Output
 
 #[derive(Default)]
 #[doc(hidden)]
-pub struct WithoutRuntimeTransformer;
+pub struct RawResourceOutput;
 
 #[derive(Default)]
 #[doc(hidden)]
-pub struct WithRuntimeTransformer;
+pub struct RuntimeResourceOutput;
+
+pub(crate) trait ConfigOutput<T>: Send + Sync + 'static {
+    type Output: Resource;
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn produce(raw: &T) -> Result<Self::Output, Self::Error>;
+}
+
+impl<T> ConfigOutput<T> for RawResourceOutput
+where
+    T: Clone + Resource,
+{
+    type Output = T;
+    type Error = Infallible;
+
+    fn produce(raw: &T) -> Result<Self::Output, Self::Error> {
+        Ok(raw.clone())
+    }
+}
+
+impl<T> ConfigOutput<T> for RuntimeResourceOutput
+where
+    T: TransformToRuntimeResourceConfig,
+{
+    type Output = T::Runtime;
+    type Error = T::Error;
+
+    fn produce(raw: &T) -> Result<Self::Output, Self::Error> {
+        raw.transform_to_runtime()
+    }
+}
 
 //endregion
 
-pub struct ConfigPlugin<T, L, V = NoConfigValidation, R = WithoutRuntimeTransformer> {
+pub struct ConfigPlugin<T, L, V = NoConfigValidation, O = RawResourceOutput> {
     path: ConfigPath,
     input_policy: InitialLoadPolicy<T>,
     _marker: PhantomData<fn() -> T>,
     _loader: PhantomData<fn() -> L>,
     _validation: PhantomData<fn() -> V>,
-    _runtime: PhantomData<fn() -> R>,
+    _output: PhantomData<fn() -> O>,
 }
 
-impl<T, L> ConfigPlugin<T, L, NoConfigValidation, WithoutRuntimeTransformer> {
+impl<T, L> ConfigPlugin<T, L, NoConfigValidation, RawResourceOutput> {
     pub const fn new(path: ConfigPath) -> Self {
         Self {
             path,
@@ -233,13 +264,13 @@ impl<T, L> ConfigPlugin<T, L, NoConfigValidation, WithoutRuntimeTransformer> {
             _marker: PhantomData,
             _loader: PhantomData,
             _validation: PhantomData,
-            _runtime: PhantomData,
+            _output: PhantomData,
         }
     }
 }
 
-impl<T, L, V, R> ConfigPlugin<T, L, V, R> {
-    pub const fn with_validation(self) -> ConfigPlugin<T, L, WithValidation, R>
+impl<T, L, V, O> ConfigPlugin<T, L, V, O> {
+    pub const fn with_validation(self) -> ConfigPlugin<T, L, WithValidation, O>
     where
         T: ValidateConfig,
     {
@@ -249,21 +280,7 @@ impl<T, L, V, R> ConfigPlugin<T, L, V, R> {
             _marker: PhantomData,
             _loader: PhantomData,
             _validation: PhantomData,
-            _runtime: PhantomData,
-        }
-    }
-
-    pub const fn with_runtime_transformer(self) -> ConfigPlugin<T, L, V, WithRuntimeTransformer>
-    where
-        T: TransformToRuntimeResourceConfig,
-    {
-        ConfigPlugin {
-            path: self.path,
-            input_policy: self.input_policy,
-            _marker: PhantomData,
-            _loader: PhantomData,
-            _validation: PhantomData,
-            _runtime: PhantomData,
+            _output: PhantomData,
         }
     }
 
@@ -277,7 +294,23 @@ impl<T, L, V, R> ConfigPlugin<T, L, V, R> {
     }
 }
 
-impl<T, L, V, R> ConfigPlugin<T, L, V, R>
+impl<T, L, V> ConfigPlugin<T, L, V, RawResourceOutput> {
+    pub const fn with_runtime_transformer(self) -> ConfigPlugin<T, L, V, RuntimeResourceOutput>
+    where
+        T: TransformToRuntimeResourceConfig,
+    {
+        ConfigPlugin {
+            path: self.path,
+            input_policy: self.input_policy,
+            _marker: PhantomData,
+            _loader: PhantomData,
+            _validation: PhantomData,
+            _output: PhantomData,
+        }
+    }
+}
+
+impl<T, L, V, O> ConfigPlugin<T, L, V, O>
 where
     T: Default,
 {
@@ -313,55 +346,37 @@ impl<T: Send + Sync + 'static> ConfigHandle<T> {
     }
 }
 
-impl<T, L, V> Plugin for ConfigPlugin<T, L, V, WithoutRuntimeTransformer>
+impl<T, L, V, O> Plugin for ConfigPlugin<T, L, V, O>
 where
-    T: Clone + Resource,
+    T: Send + Sync + 'static,
     InitialLoadPolicy<T>: Send + Sync + 'static,
     L: ConfigFormatLoader<T>,
     V: ConfigValidation<T>,
+    O: ConfigOutput<T>,
 {
     fn build(&self, app: &mut App) {
         let path = self.path;
         let input_policy = self.input_policy;
 
-        build_config_asset_plugin_base::<T, L, V>(app, path, input_policy);
+        register_config_asset_source::<T, L, V>(app, path, input_policy);
+        app.init_resource::<ConfigState<O::Output>>()
+            .add_systems(Update, resolve_config_output::<T, O>);
     }
 }
 
-impl<T, L, V> Plugin for ConfigPlugin<T, L, V, WithRuntimeTransformer>
-where
-    T: Clone + TransformToRuntimeResourceConfig + Resource,
-    InitialLoadPolicy<T>: Send + Sync + 'static,
-    L: ConfigFormatLoader<T>,
-    V: ConfigValidation<T>,
-{
-    fn build(&self, app: &mut App) {
-        let path = self.path;
-        let input_policy = self.input_policy;
-
-        build_config_asset_plugin_base::<T, L, V>(app, path, input_policy);
-        app.init_resource::<ConfigState<T::Runtime>>().add_systems(
-            Update,
-            transform_config_to_runtime_resource::<T>.after(resolve_config_asset::<T>),
-        );
-    }
-}
-
-fn build_config_asset_plugin_base<T, L, V>(
+fn register_config_asset_source<T, L, V>(
     app: &mut App,
     path: ConfigPath,
     input_policy: InitialLoadPolicy<T>,
 ) where
-    T: Clone + Resource,
+    T: Send + Sync + 'static,
     InitialLoadPolicy<T>: Send + Sync + 'static,
     L: ConfigFormatLoader<T>,
     V: ConfigValidation<T>,
 {
     app.init_asset::<ConfigAsset<T>>()
         .insert_resource(input_policy)
-        .init_resource::<ConfigState<T>>()
         .register_asset_loader(ConfigAssetLoader::<T, L, V>::default())
-        .add_systems(Update, resolve_config_asset::<T>)
         .add_systems(
             Startup,
             move |mut commands: Commands, asset_server: Res<AssetServer>| {
