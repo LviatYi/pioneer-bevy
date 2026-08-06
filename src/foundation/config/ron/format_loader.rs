@@ -1,6 +1,6 @@
-use super::super::asset::{
-    ConfigFormatLoader, ConfigPlugin, NoConfigValidation, RawResourceOutput,
-};
+use super::super::asset::{ConfigFormatLoader, ConfigPlugin};
+use super::super::output::RawResourceOutput;
+use super::super::validation::NoConfigValidation;
 use serde::de::DeserializeOwned;
 use std::marker::PhantomData;
 use thiserror::Error;

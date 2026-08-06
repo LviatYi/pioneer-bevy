@@ -1,14 +1,15 @@
 mod asset;
-mod config_context;
 mod error;
+mod output;
 mod path;
 mod ron;
+mod validation;
 
-pub use asset::{ConfigFormatLoader, ConfigPlugin, ConfigValidation, NoConfigValidation};
-pub use config_context::{
-    ConfigSource, ConfigState, ConfigStatus, InitialLoadPolicy, TransformToRuntimeResourceConfig,
-    ValidateConfig,
+pub use asset::{
+    ConfigFormatLoader, ConfigPlugin, ConfigSource, ConfigState, ConfigStatus, InitialLoadPolicy,
 };
 pub use error::{ConfigLoadError, NoConfigValidationError};
+pub use output::TransformToRuntimeResourceConfig;
 pub use path::ConfigPath;
 pub use ron::{RonConfigFormatError, RonConfigFormatLoader, RonConfigPlugin};
+pub use validation::{ConfigValidation, NoConfigValidation, ValidateConfig};
