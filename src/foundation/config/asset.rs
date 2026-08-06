@@ -341,33 +341,20 @@ where
         let path = self.path;
         let input_policy = self.input_policy;
 
-        register_config_asset_source::<T, L, V>(app, path, input_policy);
-        app.init_resource::<ConfigState<O::Output>>()
+        app.init_asset::<ConfigAsset<T>>()
+            .insert_resource(input_policy)
+            .register_asset_loader(ConfigAssetLoader::<T, L, V>::default())
+            .add_systems(
+                Startup,
+                move |mut commands: Commands, asset_server: Res<AssetServer>| {
+                    let handle = asset_server.load(path.asset_path());
+
+                    commands.insert_resource(ConfigHandle::<T> { path, handle });
+                },
+            )
+            .init_resource::<ConfigState<O::Output>>()
             .add_systems(Update, resolve_config_output::<T, O>);
     }
-}
-
-fn register_config_asset_source<T, L, V>(
-    app: &mut App,
-    path: ConfigPath,
-    input_policy: InitialLoadPolicy<T>,
-) where
-    T: Send + Sync + 'static,
-    InitialLoadPolicy<T>: Send + Sync + 'static,
-    L: ConfigFormatLoader<T>,
-    V: ConfigValidation<T>,
-{
-    app.init_asset::<ConfigAsset<T>>()
-        .insert_resource(input_policy)
-        .register_asset_loader(ConfigAssetLoader::<T, L, V>::default())
-        .add_systems(
-            Startup,
-            move |mut commands: Commands, asset_server: Res<AssetServer>| {
-                let handle = asset_server.load(path.asset_path());
-
-                commands.insert_resource(ConfigHandle::<T> { path, handle });
-            },
-        );
 }
 
 #[cfg(test)]
