@@ -96,7 +96,7 @@ pub enum GridConfigValidationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::foundation::config::{RonConfigFormatLoader, load_validated_config_bytes};
+    use crate::foundation::config::{ConfigFormatLoader, RonConfigFormatLoader};
 
     #[test]
     fn default_config_uses_current_design_values() {
@@ -113,14 +113,13 @@ mod tests {
     fn loads_default_grid_config_file() {
         let bytes = std::fs::read(DEFAULT_GRID_CONFIG_PATH.file_system_path()).unwrap();
 
-        assert_eq!(
-            load_validated_config_bytes::<GridConfig, RonConfigFormatLoader<GridConfig>>(
-                &bytes,
-                DEFAULT_GRID_CONFIG_PATH.asset_path(),
-            )
-            .unwrap(),
-            GridConfig::default()
-        );
+        let config = RonConfigFormatLoader::<GridConfig>::default()
+            .load(&bytes)
+            .unwrap()
+            .validated()
+            .unwrap();
+
+        assert_eq!(config, GridConfig::default());
     }
 
     #[test]

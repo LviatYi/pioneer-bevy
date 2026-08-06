@@ -4,7 +4,6 @@ use super::config_context::{
 };
 use super::error::{ConfigLoadError, NoConfigValidationError};
 use super::path::ConfigPath;
-use super::pipeline::{load_config_bytes, load_validated_config_bytes};
 use bevy::asset::{Asset, AssetApp, AssetLoader, Assets, LoadContext, io::Reader};
 use bevy::prelude::{
     App, AssetId, AssetServer, Commands, Handle, Plugin, Res, Resource, Startup, Update,
@@ -13,6 +12,8 @@ use bevy::reflect::TypePath;
 use std::any::type_name;
 use std::convert::Infallible;
 use std::marker::PhantomData;
+
+//region Loader
 
 pub trait ConfigFormatLoader<T>: Default + Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -136,9 +137,18 @@ where
                 source,
             })?;
 
+        let config = self
+            .format_loader
+            .load(&bytes)
+            .map_err(|source| ConfigLoadError::Format {
+                path: path.clone(),
+                source,
+            })?;
         self.validation
-            .load::<F>(&bytes, path)
-            .map(ConfigAsset::new)
+            .validate(&config)
+            .map_err(|source| ConfigLoadError::Validation { path, source })?;
+
+        Ok(ConfigAsset::new(config))
     }
 
     fn extensions(&self) -> &[&str] {
@@ -146,18 +156,14 @@ where
     }
 }
 
+//endregion
+
 //region Validation
 
 pub trait ConfigValidation<T>: Default + Send + Sync + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    fn load<F>(
-        &self,
-        bytes: &[u8],
-        path: String,
-    ) -> Result<T, ConfigLoadError<F::Error, Self::Error>>
-    where
-        F: ConfigFormatLoader<T>;
+    fn validate(&self, config: &T) -> Result<(), Self::Error>;
 }
 
 #[derive(Default)]
@@ -166,15 +172,8 @@ pub struct NoConfigValidation;
 impl<T> ConfigValidation<T> for NoConfigValidation {
     type Error = NoConfigValidationError;
 
-    fn load<F>(
-        &self,
-        bytes: &[u8],
-        path: String,
-    ) -> Result<T, ConfigLoadError<F::Error, Self::Error>>
-    where
-        F: ConfigFormatLoader<T>,
-    {
-        load_config_bytes::<T, F>(bytes, path)
+    fn validate(&self, _config: &T) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 
@@ -188,15 +187,8 @@ where
 {
     type Error = T::Error;
 
-    fn load<F>(
-        &self,
-        bytes: &[u8],
-        path: String,
-    ) -> Result<T, ConfigLoadError<F::Error, Self::Error>>
-    where
-        F: ConfigFormatLoader<T>,
-    {
-        load_validated_config_bytes::<T, F>(bytes, path)
+    fn validate(&self, config: &T) -> Result<(), Self::Error> {
+        config.validate()
     }
 }
 
@@ -386,6 +378,8 @@ mod tests {
     use bevy::prelude::*;
     use serde::Deserialize;
     use std::convert::Infallible;
+    use std::error::Error;
+    use std::fmt::{Display, Formatter};
 
     const TEST_CONFIG_PATH: ConfigPath = ConfigPath::new("config/grid.ron");
 
@@ -406,6 +400,57 @@ mod tests {
 
     #[derive(Resource)]
     struct TestRuntime;
+
+    #[derive(Debug)]
+    struct ValidatedTestConfig {
+        value: u32,
+    }
+
+    impl ValidateConfig for ValidatedTestConfig {
+        type Error = TestConfigValidationError;
+
+        fn validate(&self) -> Result<(), Self::Error> {
+            if self.value == 0 {
+                return Err(TestConfigValidationError);
+            }
+
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestConfigValidationError;
+
+    impl Display for TestConfigValidationError {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("value must be greater than 0")
+        }
+    }
+
+    impl Error for TestConfigValidationError {}
+
+    #[test]
+    fn validation_reports_validation_errors() {
+        let error = WithValidation
+            .validate(&ValidatedTestConfig { value: 0 })
+            .unwrap_err();
+
+        assert!(matches!(error, TestConfigValidationError));
+    }
+
+    #[test]
+    fn validation_accepts_valid_configs() {
+        let config = ValidatedTestConfig { value: 7 };
+
+        assert!(WithValidation.validate(&config).is_ok());
+    }
+
+    #[test]
+    fn no_validation_accepts_configs_without_validation() {
+        let config = ValidatedTestConfig { value: 0 };
+
+        assert!(NoConfigValidation.validate(&config).is_ok());
+    }
 
     #[test]
     fn runtime_plugin_registers_config_asset() {

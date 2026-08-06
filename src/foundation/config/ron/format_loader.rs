@@ -41,3 +41,23 @@ pub enum RonConfigFormatError {
     #[error("failed to parse config as RON")]
     Parse(#[source] ron::error::SpannedError),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    struct TestConfig {
+        _value: u32,
+    }
+
+    #[test]
+    fn reports_parse_errors() {
+        let error = RonConfigFormatLoader::<TestConfig>::default()
+            .load(b"not ron")
+            .unwrap_err();
+
+        assert!(matches!(error, RonConfigFormatError::Parse(_)));
+    }
+}
