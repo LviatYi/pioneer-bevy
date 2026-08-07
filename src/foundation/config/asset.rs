@@ -5,8 +5,9 @@ use super::output::{
 use super::path::ConfigPath;
 use super::validation::{ConfigValidation, NoConfigValidation, ValidateConfig, WithValidation};
 use bevy::asset::{
-    Asset, AssetApp, AssetLoadFailedEvent, AssetLoader, Assets, LoadContext, io::Reader,
+    Asset, AssetApp, AssetEvent, AssetLoadFailedEvent, AssetLoader, Assets, LoadContext, io::Reader,
 };
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::{
     App, AssetId, AssetServer, Commands, Handle, MessageReader, Plugin, Res, ResMut, Resource,
     Startup, Update,
@@ -15,7 +16,6 @@ use bevy::reflect::TypePath;
 use std::any::type_name;
 use std::marker::PhantomData;
 use tracing::warn;
-
 //region Loader
 
 pub trait ConfigFormatLoader<T>: Default + Send + Sync + 'static {
@@ -243,7 +243,7 @@ impl ConfigSource {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfigStatus {
-    Loading,
+    Assetization,
     Resolved { source: ConfigSource },
 }
 
@@ -256,7 +256,7 @@ pub struct ConfigState<T: Send + Sync + 'static> {
 impl<T: Send + Sync + 'static> Default for ConfigState<T> {
     fn default() -> Self {
         Self {
-            status: ConfigStatus::Loading,
+            status: ConfigStatus::Assetization,
             _marker: PhantomData,
         }
     }
@@ -273,7 +273,7 @@ impl<T: Send + Sync + 'static> ConfigState<T> {
 
     pub const fn source(&self) -> Option<ConfigSource> {
         match self.status {
-            ConfigStatus::Loading => None,
+            ConfigStatus::Assetization => None,
             ConfigStatus::Resolved { source } => Some(source),
         }
     }
@@ -401,38 +401,139 @@ where
     }
 }
 
-fn resolve_config_output<T, O>(
-    mut commands: Commands,
-    handle: Res<ConfigHandle<T>>,
-    assets: Res<Assets<ConfigAsset<T>>>,
-    policy: Res<InitialLoadPolicy<T>>,
-    mut state: ResMut<ConfigState<O::Output>>,
-    mut failures: MessageReader<AssetLoadFailedEvent<ConfigAsset<T>>>,
-) where
+/// Bridges Bevy's asset lifecycle into the stable config resource exposed to the world.
+///
+/// Bevy finalizes asynchronous loads and inserts their assets in `PreUpdate`, while
+/// `Assets` publishes the corresponding `Added` or `Modified` messages in `PostUpdate`.
+/// This system runs in `Update`, so initial resolution intentionally polls `Assets`
+/// directly. A later `Added` message is only a refresh trigger while serving a fallback;
+/// otherwise it is the delayed notification for an initial output that was already installed.
+#[derive(SystemParam)]
+struct ConfigResolutionContext<'w, 's, T, O>
+where
     T: Send + Sync + 'static,
     O: ConfigOutput<T>,
 {
-    if state.is_resolved() {
+    commands: Commands<'w, 's>,
+    handle: Res<'w, ConfigHandle<T>>,
+    assets: Res<'w, Assets<ConfigAsset<T>>>,
+    policy: Res<'w, InitialLoadPolicy<T>>,
+    state: ResMut<'w, ConfigState<<O as ConfigOutput<T>>::Output>>,
+    asset_events: MessageReader<'w, 's, AssetEvent<ConfigAsset<T>>>,
+    failures: MessageReader<'w, 's, AssetLoadFailedEvent<ConfigAsset<T>>>,
+}
+
+fn event_requests_refresh<T: Send + Sync + 'static>(
+    event: &AssetEvent<ConfigAsset<T>>,
+    handle_id: AssetId<ConfigAsset<T>>,
+    source: ConfigSource,
+) -> bool {
+    event.is_modified(handle_id)
+        || (event.is_added(handle_id) && matches!(source, ConfigSource::DefaultFallback(_)))
+}
+
+fn resolve_config_output<T, O>(mut context: ConfigResolutionContext<T, O>)
+where
+    T: Send + Sync + 'static,
+    O: ConfigOutput<T>,
+{
+    if handle_config_load_failure::<T, O>(&mut context) {
         return;
     }
 
-    for failure in failures.read() {
-        if failure.id == handle.id() {
-            let (config, source) = policy.handle_load_failure(handle.path(), failure);
-            commit_config_output::<T, O>(&mut commands, &mut state, &config, source);
-            return;
+    match context.state.status {
+        ConfigStatus::Assetization => resolve_initial_config_output::<T, O>(&mut context),
+        ConfigStatus::Resolved { source } => {
+            let handle_id = context.handle.id();
+            let refresh_requested =
+                context
+                    .asset_events
+                    .read()
+                    .fold(false, |refresh_requested, event| {
+                        refresh_requested || event_requests_refresh(event, handle_id, source)
+                    });
+
+            if refresh_requested {
+                refresh_resolved_config_output::<T, O>(&mut context)
+            }
         }
     }
+}
 
-    let Some(config) = handle.get(&assets) else {
+fn handle_config_load_failure<T, O>(context: &mut ConfigResolutionContext<'_, '_, T, O>) -> bool
+where
+    T: Send + Sync + 'static,
+    O: ConfigOutput<T>,
+{
+    let handle_id = context.handle.id();
+
+    for failure in context.failures.read() {
+        if failure.id != handle_id {
+            continue;
+        }
+
+        if context.state.is_resolved() {
+            warn!(
+                config_path = %failure.path,
+                error = %failure.error,
+                "config reload failed; keeping last resolved output"
+            );
+            return true;
+        }
+
+        let (config, source) =
+            (*context.policy).handle_load_failure(context.handle.path(), failure);
+        commit_initial_config_output::<T, O>(
+            &mut context.commands,
+            &mut context.state,
+            &config,
+            source,
+        );
+        return true;
+    }
+
+    false
+}
+
+fn resolve_initial_config_output<T, O>(context: &mut ConfigResolutionContext<'_, '_, T, O>)
+where
+    T: Send + Sync + 'static,
+    O: ConfigOutput<T>,
+{
+    let Some(config) = context.handle.get(&context.assets) else {
         return;
     };
 
-    let source = ConfigSource::Asset(handle.path());
-    commit_config_output::<T, O>(&mut commands, &mut state, config, source);
+    commit_initial_config_output::<T, O>(
+        &mut context.commands,
+        &mut context.state,
+        config,
+        ConfigSource::Asset(context.handle.path()),
+    );
 }
 
-fn commit_config_output<T, O>(
+fn refresh_resolved_config_output<T, O>(context: &mut ConfigResolutionContext<'_, '_, T, O>)
+where
+    T: Send + Sync + 'static,
+    O: ConfigOutput<T>,
+{
+    let Some(config) = context.handle.get(&context.assets) else {
+        return;
+    };
+
+    let source = ConfigSource::Asset(context.handle.path());
+    if let Err(error) =
+        commit_config_output::<T, O>(&mut context.commands, &mut context.state, config, source)
+    {
+        warn!(
+            config_path = source.path().asset_path(),
+            error = %error,
+            "config reload failed to produce its resource output; keeping last resolved output"
+        );
+    }
+}
+
+fn commit_initial_config_output<T, O>(
     commands: &mut Commands,
     state: &mut ConfigState<O::Output>,
     config: &T,
@@ -440,15 +541,29 @@ fn commit_config_output<T, O>(
 ) where
     O: ConfigOutput<T>,
 {
-    let output = O::produce(config).unwrap_or_else(|error| {
+    commit_config_output::<T, O>(commands, state, config, source).unwrap_or_else(|error| {
         panic!(
             "config `{}` failed to produce its resource output: {error}",
             source.path().asset_path()
         )
     });
+}
+
+fn commit_config_output<T, O>(
+    commands: &mut Commands,
+    state: &mut ConfigState<O::Output>,
+    config: &T,
+    source: ConfigSource,
+) -> Result<(), O::Error>
+where
+    O: ConfigOutput<T>,
+{
+    let output = O::produce(config)?;
 
     commands.insert_resource(output);
     state.status = ConfigStatus::Resolved { source };
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -460,6 +575,7 @@ mod tests {
     use bevy::prelude::*;
     use serde::Deserialize;
     use std::convert::Infallible;
+    use thiserror::Error;
 
     const TEST_CONFIG_PATH: ConfigPath = ConfigPath::new("config/grid.ron");
     const MISSING_CONFIG_PATH: ConfigPath = ConfigPath::new("config/missing-config.ron");
@@ -490,14 +606,22 @@ mod tests {
 
     impl TransformToRuntimeResourceConfig for TransformingTestConfig {
         type Runtime = RuntimeTestConfig;
-        type Error = Infallible;
+        type Error = TestTransformError;
 
         fn transform_to_runtime(&self) -> Result<Self::Runtime, Self::Error> {
+            if self.base_cell_size_cm == 0 {
+                return Err(TestTransformError);
+            }
+
             Ok(RuntimeTestConfig {
                 base_cells_per_building_cell: self.building_cell_size_cm / self.base_cell_size_cm,
             })
         }
     }
+
+    #[derive(Debug, Error)]
+    #[error("base cell size must be greater than zero")]
+    struct TestTransformError;
 
     #[derive(Debug, Eq, PartialEq, Resource)]
     struct RuntimeTestConfig {
@@ -508,6 +632,40 @@ mod tests {
     struct RawTestConfig {
         base_cell_size_cm: u32,
         building_cell_size_cm: u32,
+    }
+
+    #[test]
+    fn added_asset_requests_refresh_only_while_serving_fallback() {
+        let handle_id = AssetId::<ConfigAsset<TestConfig>>::invalid();
+        let event = AssetEvent::Added { id: handle_id };
+
+        assert!(!event_requests_refresh(
+            &event,
+            handle_id,
+            ConfigSource::Asset(TEST_CONFIG_PATH)
+        ));
+        assert!(event_requests_refresh(
+            &event,
+            handle_id,
+            ConfigSource::DefaultFallback(TEST_CONFIG_PATH)
+        ));
+    }
+
+    #[test]
+    fn modified_asset_always_requests_refresh() {
+        let handle_id = AssetId::<ConfigAsset<TestConfig>>::invalid();
+        let event = AssetEvent::Modified { id: handle_id };
+
+        assert!(event_requests_refresh(
+            &event,
+            handle_id,
+            ConfigSource::Asset(TEST_CONFIG_PATH)
+        ));
+        assert!(event_requests_refresh(
+            &event,
+            handle_id,
+            ConfigSource::DefaultFallback(TEST_CONFIG_PATH)
+        ));
     }
 
     #[test]
@@ -603,7 +761,7 @@ mod tests {
         let mut app = runtime_config_app(MISSING_CONFIG_PATH);
         app.update();
 
-        write_load_failure::<TransformingTestConfig>(&mut app);
+        write_load_failure::<TransformingTestConfig>(&mut app, MISSING_CONFIG_PATH);
         app.update();
 
         let runtime = app.world().resource::<RuntimeTestConfig>();
@@ -633,7 +791,7 @@ mod tests {
         ));
         app.update();
 
-        write_load_failure::<RawTestConfig>(&mut app);
+        write_load_failure::<RawTestConfig>(&mut app, MISSING_CONFIG_PATH);
         app.update();
 
         let config = app.world().resource::<RawTestConfig>();
@@ -646,6 +804,141 @@ mod tests {
             &ConfigStatus::Resolved {
                 source: ConfigSource::DefaultFallback(MISSING_CONFIG_PATH)
             }
+        );
+    }
+
+    #[test]
+    fn modified_config_asset_updates_runtime_resource() {
+        let mut app = resolved_runtime_config_app();
+        replace_target_config(
+            &mut app,
+            TransformingTestConfig {
+                base_cell_size_cm: 5,
+                building_cell_size_cm: 100,
+            },
+        );
+
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<RuntimeTestConfig>(),
+            &RuntimeTestConfig {
+                base_cells_per_building_cell: 20
+            }
+        );
+    }
+
+    #[test]
+    fn modified_unrelated_config_asset_is_ignored() {
+        let mut app = resolved_runtime_config_app();
+        let other_handle = app
+            .world_mut()
+            .resource_mut::<Assets<ConfigAsset<TransformingTestConfig>>>()
+            .add(ConfigAsset::new(TransformingTestConfig {
+                base_cell_size_cm: 5,
+                building_cell_size_cm: 100,
+            }));
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<Assets<ConfigAsset<TransformingTestConfig>>>()
+            .insert(
+                other_handle.id(),
+                ConfigAsset::new(TransformingTestConfig {
+                    base_cell_size_cm: 5,
+                    building_cell_size_cm: 200,
+                }),
+            )
+            .unwrap();
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<RuntimeTestConfig>(),
+            &RuntimeTestConfig {
+                base_cells_per_building_cell: 10
+            }
+        );
+    }
+
+    #[test]
+    fn failed_reload_keeps_last_resolved_output() {
+        let mut app = resolved_runtime_config_app();
+        write_load_failure::<TransformingTestConfig>(&mut app, TEST_CONFIG_PATH);
+
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<RuntimeTestConfig>(),
+            &RuntimeTestConfig {
+                base_cells_per_building_cell: 10
+            }
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ConfigState<RuntimeTestConfig>>()
+                .source(),
+            Some(ConfigSource::Asset(TEST_CONFIG_PATH))
+        );
+    }
+
+    #[test]
+    fn failed_reload_transform_keeps_last_resolved_output() {
+        let mut app = resolved_runtime_config_app();
+        replace_target_config(
+            &mut app,
+            TransformingTestConfig {
+                base_cell_size_cm: 0,
+                building_cell_size_cm: 100,
+            },
+        );
+
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<RuntimeTestConfig>(),
+            &RuntimeTestConfig {
+                base_cells_per_building_cell: 10
+            }
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ConfigState<RuntimeTestConfig>>()
+                .source(),
+            Some(ConfigSource::Asset(TEST_CONFIG_PATH))
+        );
+    }
+
+    #[test]
+    fn added_config_asset_recovers_from_default_fallback() {
+        let mut app = runtime_config_app(MISSING_CONFIG_PATH);
+        app.update();
+        write_load_failure::<TransformingTestConfig>(&mut app, MISSING_CONFIG_PATH);
+        app.update();
+
+        replace_target_config(
+            &mut app,
+            TransformingTestConfig {
+                base_cell_size_cm: 5,
+                building_cell_size_cm: 100,
+            },
+        );
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<RuntimeTestConfig>(),
+            &RuntimeTestConfig {
+                base_cells_per_building_cell: 20
+            }
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ConfigState<RuntimeTestConfig>>()
+                .source(),
+            Some(ConfigSource::Asset(MISSING_CONFIG_PATH))
         );
     }
 
@@ -664,7 +957,32 @@ mod tests {
         app
     }
 
-    fn write_load_failure<T>(app: &mut App)
+    fn resolved_runtime_config_app() -> App {
+        let mut app = runtime_config_app(TEST_CONFIG_PATH);
+        app.update();
+        replace_target_config(
+            &mut app,
+            TransformingTestConfig {
+                base_cell_size_cm: 5,
+                building_cell_size_cm: 50,
+            },
+        );
+        app.update();
+        app
+    }
+
+    fn replace_target_config(app: &mut App, config: TransformingTestConfig) {
+        let id = app
+            .world()
+            .resource::<ConfigHandle<TransformingTestConfig>>()
+            .id();
+        app.world_mut()
+            .resource_mut::<Assets<ConfigAsset<TransformingTestConfig>>>()
+            .insert(id, ConfigAsset::new(config))
+            .unwrap();
+    }
+
+    fn write_load_failure<T>(app: &mut App, path: ConfigPath)
     where
         T: Send + Sync + 'static,
     {
@@ -674,10 +992,10 @@ mod tests {
             .resource_mut::<Messages<AssetLoadFailedEvent<ConfigAsset<T>>>>()
             .write(AssetLoadFailedEvent {
                 id,
-                path: MISSING_CONFIG_PATH.asset_path().into(),
+                path: path.asset_path().into(),
                 error: AssetLoadError::MissingAssetLoader {
                     asset_type_id: None,
-                    asset_path: MISSING_CONFIG_PATH.asset_path().to_owned(),
+                    asset_path: path.asset_path().to_owned(),
                 },
             });
     }
