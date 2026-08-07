@@ -9,8 +9,8 @@ use bevy::asset::{
 };
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::{
-    App, AssetId, AssetServer, Commands, Handle, MessageReader, Plugin, Res, ResMut, Resource,
-    Startup, Update,
+    App, AssetId, AssetServer, Commands, Handle, Message, MessageReader, Plugin, Res, ResMut,
+    Resource, Startup, Update,
 };
 use bevy::reflect::TypePath;
 use std::any::type_name;
@@ -281,6 +281,29 @@ impl<T: Send + Sync + 'static> ConfigState<T> {
 
 //endregion
 
+/// Requests an explicit asynchronous reload of the config registered for `T`.
+///
+/// Requests are type-isolated: reloading one config type cannot accidentally reload another.
+/// Multiple requests received in the same frame are coalesced into one asset reload.
+#[derive(Message)]
+pub struct ConfigReloadRequest<T: Send + Sync + 'static> {
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T: Send + Sync + 'static> ConfigReloadRequest<T> {
+    pub const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: Send + Sync + 'static> Default for ConfigReloadRequest<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct ConfigPlugin<T, L, V = NoConfigValidation, O = RawResourceOutput> {
     path: ConfigPath,
     input_policy: InitialLoadPolicy<T>,
@@ -386,6 +409,7 @@ where
         let input_policy = self.input_policy;
 
         app.init_asset::<ConfigAsset<T>>()
+            .add_message::<ConfigReloadRequest<T>>()
             .insert_resource(input_policy)
             .register_asset_loader(ConfigAssetLoader::<T, L, V>::default())
             .add_systems(
@@ -397,7 +421,22 @@ where
                 },
             )
             .init_resource::<ConfigState<O::Output>>()
-            .add_systems(Update, resolve_config_output::<T, O>);
+            .add_systems(
+                Update,
+                (request_config_reload::<T>, resolve_config_output::<T, O>),
+            );
+    }
+}
+
+fn request_config_reload<T>(
+    mut requests: MessageReader<ConfigReloadRequest<T>>,
+    asset_server: Res<AssetServer>,
+    handle: Res<ConfigHandle<T>>,
+) where
+    T: Send + Sync + 'static,
+{
+    if requests.read().count() > 0 {
+        asset_server.reload(handle.path().asset_path());
     }
 }
 
@@ -444,17 +483,23 @@ where
     match context.state.status {
         ConfigStatus::Assetization => resolve_initial_config_output::<T, O>(&mut context),
         ConfigStatus::Resolved { source } => {
-            let handle_id = context.handle.id();
-            let refresh_requested =
-                context
-                    .asset_events
-                    .read()
-                    .fold(false, |refresh_requested, event| {
-                        refresh_requested || event_requests_refresh(event, handle_id, source)
-                    });
+            #[allow(
+                clippy::unnecessary_fold,
+                reason = "fold must drain MessageReader after a refresh has been requested"
+            )]
+            {
+                let handle_id = context.handle.id();
+                let refresh_requested =
+                    context
+                        .asset_events
+                        .read()
+                        .fold(false, |refresh_requested, event| {
+                            refresh_requested || event_requests_refresh(event, handle_id, source)
+                        });
 
-            if refresh_requested {
-                refresh_resolved_config_output::<T, O>(&mut context)
+                if refresh_requested {
+                    refresh_resolved_config_output::<T, O>(&mut context)
+                }
             }
         }
     }
@@ -575,10 +620,14 @@ mod tests {
     use bevy::prelude::*;
     use serde::Deserialize;
     use std::convert::Infallible;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use thiserror::Error;
 
     const TEST_CONFIG_PATH: ConfigPath = ConfigPath::new("config/grid.ron");
     const MISSING_CONFIG_PATH: ConfigPath = ConfigPath::new("config/missing-config.ron");
+    const EXPLICIT_RELOAD_CONFIG_PATH: ConfigPath = ConfigPath::new("config/explicit-reload.ron");
 
     #[derive(Debug, Default, Deserialize, PartialEq)]
     struct TestConfig {
@@ -830,6 +879,62 @@ mod tests {
     }
 
     #[test]
+    fn config_changes_only_after_an_explicit_reload_request() {
+        let asset_directory = TestAssetDirectory::new();
+        asset_directory.write_config(EXPLICIT_RELOAD_CONFIG_PATH, 5, 50);
+
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin {
+                file_path: asset_directory.path().to_string_lossy().into_owned(),
+                watch_for_changes_override: Some(false),
+                ..Default::default()
+            },
+            RonConfigPlugin::<TransformingTestConfig>::new(EXPLICIT_RELOAD_CONFIG_PATH)
+                .with_runtime_transformer(),
+        ));
+
+        update_until(&mut app, |world| {
+            world.get_resource::<RuntimeTestConfig>()
+                == Some(&RuntimeTestConfig {
+                    base_cells_per_building_cell: 10,
+                })
+        });
+
+        asset_directory.write_config(EXPLICIT_RELOAD_CONFIG_PATH, 5, 100);
+        for _ in 0..4 {
+            app.update();
+            std::thread::yield_now();
+        }
+
+        assert_eq!(
+            app.world().resource::<RuntimeTestConfig>(),
+            &RuntimeTestConfig {
+                base_cells_per_building_cell: 10,
+            }
+        );
+
+        app.world_mut()
+            .resource_mut::<Messages<ConfigReloadRequest<TransformingTestConfig>>>()
+            .write(ConfigReloadRequest::new());
+
+        update_until(&mut app, |world| {
+            world.get_resource::<RuntimeTestConfig>()
+                == Some(&RuntimeTestConfig {
+                    base_cells_per_building_cell: 20,
+                })
+        });
+
+        assert_eq!(
+            app.world()
+                .resource::<ConfigState<RuntimeTestConfig>>()
+                .source(),
+            Some(ConfigSource::Asset(EXPLICIT_RELOAD_CONFIG_PATH))
+        );
+    }
+
+    #[test]
     fn modified_unrelated_config_asset_is_ignored() {
         let mut app = resolved_runtime_config_app();
         let other_handle = app
@@ -998,5 +1103,64 @@ mod tests {
                     asset_path: path.asset_path().to_owned(),
                 },
             });
+    }
+
+    fn update_until(app: &mut App, mut predicate: impl FnMut(&World) -> bool) {
+        for _ in 0..10_000 {
+            app.update();
+            if predicate(app.world()) {
+                return;
+            }
+            std::thread::yield_now();
+        }
+
+        panic!("condition was not reached while updating the app");
+    }
+
+    struct TestAssetDirectory {
+        path: PathBuf,
+    }
+
+    impl TestAssetDirectory {
+        fn new() -> Self {
+            static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "pioneer-bevy-config-reload-{}-{}",
+                std::process::id(),
+                NEXT_ID.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&path).expect("temporary asset directory should be created");
+
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+
+        fn write_config(
+            &self,
+            path: ConfigPath,
+            base_cell_size_cm: u32,
+            building_cell_size_cm: u32,
+        ) {
+            let path = self.path.join(path.asset_path());
+            fs::create_dir_all(path.parent().expect("config path should have a parent"))
+                .expect("temporary config directory should be created");
+            fs::write(
+                path,
+                format!(
+                    "(base_cell_size_cm: {base_cell_size_cm}, building_cell_size_cm: {building_cell_size_cm})"
+                ),
+            )
+                .expect("temporary config should be written");
+        }
+    }
+
+    impl Drop for TestAssetDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }

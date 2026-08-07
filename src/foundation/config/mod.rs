@@ -6,7 +6,8 @@ mod ron;
 mod validation;
 
 pub use asset::{
-    ConfigFormatLoader, ConfigPlugin, ConfigSource, ConfigState, ConfigStatus, InitialLoadPolicy,
+    ConfigFormatLoader, ConfigPlugin, ConfigReloadRequest, ConfigSource, ConfigState, ConfigStatus,
+    InitialLoadPolicy,
 };
 pub use error::{ConfigLoadError, NoConfigValidationError};
 pub use output::TransformToRuntimeResourceConfig;
