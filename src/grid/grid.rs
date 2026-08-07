@@ -1,6 +1,8 @@
+use crate::foundation::config::ValidateConfig;
 use crate::grid::config::{GridConfig, cm_to_meters};
-use crate::grid::{GridConfigError, GridCoord};
+use crate::grid::{GridConfigValidationError, GridCoord};
 use bevy::math::Vec3;
+use bevy::prelude::Resource;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Grid {
@@ -8,12 +10,12 @@ pub struct Grid {
 }
 
 impl Grid {
-    pub fn new(cell_size_cm: u32) -> Result<Self, GridConfigError> {
+    pub fn new(cell_size_cm: u32) -> Result<Self, GridConfigValidationError> {
         GridConfig {
             base_cell_size_cm: cell_size_cm,
             building_cell_size_cm: cell_size_cm,
         }
-        .validate()?;
+        .validated()?;
 
         Ok(Self { cell_size_cm })
     }
@@ -64,15 +66,15 @@ impl Grid {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Resource)]
 pub struct GridSet {
     base: Grid,
     building: Grid,
 }
 
 impl GridSet {
-    pub fn from_config(config: GridConfig) -> Result<Self, GridConfigError> {
-        let config = config.validate()?;
+    pub fn from_config(config: GridConfig) -> Result<Self, GridConfigValidationError> {
+        let config = config.validated()?;
 
         Ok(Self {
             base: Grid {

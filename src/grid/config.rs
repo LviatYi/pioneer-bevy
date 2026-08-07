@@ -1,12 +1,11 @@
+use crate::foundation::config::{ConfigPath, TransformToRuntimeResourceConfig, ValidateConfig};
 use crate::grid::GridSet;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::Path;
 use thiserror::Error;
 
 pub const DEFAULT_BASE_CELL_SIZE_CM: u32 = 5;
 pub const DEFAULT_BUILDING_CELL_SIZE_CM: u32 = 50;
-pub const DEFAULT_GRID_CONFIG_PATH: &str = "assets/config/grid.ron";
+pub const DEFAULT_GRID_CONFIG_PATH: ConfigPath = ConfigPath::new("config/grid.ron");
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
@@ -25,39 +24,6 @@ impl Default for GridConfig {
 }
 
 impl GridConfig {
-    pub fn load_default_ron_file() -> Result<Self, GridConfigError> {
-        Self::load_from_ron_file(DEFAULT_GRID_CONFIG_PATH)
-    }
-
-    pub fn load_from_ron_file(path: impl AsRef<Path>) -> Result<Self, GridConfigError> {
-        let path = path.as_ref();
-        let source = fs::read_to_string(path).map_err(|source| GridConfigError::Read {
-            path: path.to_owned(),
-            source,
-        })?;
-        let config = ron::from_str::<Self>(&source).map_err(|source| GridConfigError::Parse {
-            path: path.to_owned(),
-            source,
-        })?;
-
-        config.validate()?;
-        Ok(config)
-    }
-
-    pub fn validate(self) -> Result<Self, GridConfigError> {
-        validate_positive("base_cell_size_cm", self.base_cell_size_cm)?;
-        validate_positive("building_cell_size_cm", self.building_cell_size_cm)?;
-
-        if self.building_cell_size_cm % self.base_cell_size_cm != 0 {
-            return Err(GridConfigError::BuildingCellNotMultipleOfBase {
-                base_cell_size_cm: self.base_cell_size_cm,
-                building_cell_size_cm: self.building_cell_size_cm,
-            });
-        }
-
-        Ok(self)
-    }
-
     pub fn base_cell_size_meters(self) -> f32 {
         cm_to_meters(self.base_cell_size_cm)
     }
@@ -70,14 +36,41 @@ impl GridConfig {
         self.building_cell_size_cm / self.base_cell_size_cm
     }
 
-    pub fn into_grid_set(self) -> Result<GridSet, GridConfigError> {
+    pub fn into_grid_set(self) -> Result<GridSet, GridConfigValidationError> {
         GridSet::from_config(self)
     }
 }
 
-fn validate_positive(field: &'static str, value: u32) -> Result<(), GridConfigError> {
+impl ValidateConfig for GridConfig {
+    type Error = GridConfigValidationError;
+
+    fn validate(&self) -> Result<(), Self::Error> {
+        validate_positive("base_cell_size_cm", self.base_cell_size_cm)?;
+        validate_positive("building_cell_size_cm", self.building_cell_size_cm)?;
+
+        if self.building_cell_size_cm % self.base_cell_size_cm != 0 {
+            return Err(GridConfigValidationError::BuildingCellNotMultipleOfBase {
+                base_cell_size_cm: self.base_cell_size_cm,
+                building_cell_size_cm: self.building_cell_size_cm,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+impl TransformToRuntimeResourceConfig for GridConfig {
+    type Runtime = GridSet;
+    type Error = GridConfigValidationError;
+
+    fn transform_to_runtime(&self) -> Result<Self::Runtime, Self::Error> {
+        GridSet::from_config(*self)
+    }
+}
+
+fn validate_positive(field: &'static str, value: u32) -> Result<(), GridConfigValidationError> {
     if value == 0 {
-        return Err(GridConfigError::CellSizeMustBePositive { field });
+        return Err(GridConfigValidationError::CellSizeMustBePositive { field });
     }
 
     Ok(())
@@ -88,19 +81,7 @@ pub(crate) fn cm_to_meters(value_cm: u32) -> f32 {
 }
 
 #[derive(Debug, Error)]
-pub enum GridConfigError {
-    #[error("failed to read grid config `{path}`")]
-    Read {
-        path: std::path::PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("failed to parse grid config `{path}` as RON")]
-    Parse {
-        path: std::path::PathBuf,
-        #[source]
-        source: ron::error::SpannedError,
-    },
+pub enum GridConfigValidationError {
     #[error("grid config field `{field}` must be greater than 0")]
     CellSizeMustBePositive { field: &'static str },
     #[error(
@@ -115,6 +96,7 @@ pub enum GridConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::foundation::config::{ConfigFormatLoader, RonConfigFormatLoader};
 
     #[test]
     fn default_config_uses_current_design_values() {
@@ -129,10 +111,15 @@ mod tests {
 
     #[test]
     fn loads_default_grid_config_file() {
-        assert_eq!(
-            GridConfig::load_default_ron_file().unwrap(),
-            GridConfig::default()
-        );
+        let bytes = std::fs::read(DEFAULT_GRID_CONFIG_PATH.file_system_path()).unwrap();
+
+        let config = RonConfigFormatLoader::<GridConfig>::default()
+            .load(&bytes)
+            .unwrap()
+            .validated()
+            .unwrap();
+
+        assert_eq!(config, GridConfig::default());
     }
 
     #[test]
@@ -146,7 +133,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            GridConfigError::CellSizeMustBePositive {
+            GridConfigValidationError::CellSizeMustBePositive {
                 field: "base_cell_size_cm"
             }
         ));
@@ -163,7 +150,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            GridConfigError::BuildingCellNotMultipleOfBase {
+            GridConfigValidationError::BuildingCellNotMultipleOfBase {
                 base_cell_size_cm: 6,
                 building_cell_size_cm: 50
             }
