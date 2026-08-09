@@ -74,8 +74,6 @@ pub struct GridSet {
 
 impl GridSet {
     pub fn from_config(config: GridConfig) -> Result<Self, GridConfigValidationError> {
-        let config = config.validated()?;
-
         Ok(Self {
             base: Grid {
                 cell_size_cm: config.base_cell_size_cm,

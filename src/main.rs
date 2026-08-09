@@ -1,26 +1,26 @@
+mod bootstrap;
 pub mod bsn_assets;
 pub mod foundation;
 pub mod grid;
 mod movement;
+pub mod terrain;
 
+use crate::bootstrap::config_bootstrap;
 use crate::bsn_assets::main_scene::main_scene;
-use crate::foundation::config::RonConfigPlugin;
-use crate::grid::{DEFAULT_GRID_CONFIG_PATH, GridConfig};
 use crate::movement::god::{god_camera, god_movement};
+use crate::terrain::TerrainPlugin;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 use foundation::asset::asset_guard::GitLfsAssetGuardPlugin;
 
 fn main() {
-    App::new()
-        .add_plugins(GitLfsAssetGuardPlugin::default())
-        .add_plugins(DefaultPlugins)
-        .add_plugins(
-            RonConfigPlugin::<GridConfig>::new(DEFAULT_GRID_CONFIG_PATH)
-                .with_validation()
-                .with_runtime_transformer()
-                .fallback_to_default(),
-        )
+    let mut app = App::new();
+    app.add_plugins(GitLfsAssetGuardPlugin::default())
+        .add_plugins(DefaultPlugins);
+
+    config_bootstrap(&mut app);
+
+    app.add_plugins(TerrainPlugin)
         .add_systems(
             Startup,
             (main_scene.spawn(), god_camera.spawn(), lock_cursor),

@@ -1,11 +1,10 @@
-use crate::foundation::config::{ConfigPath, TransformToRuntimeResourceConfig, ValidateConfig};
+use crate::foundation::config::{TransformToRuntimeResourceConfig, ValidateConfig};
 use crate::grid::GridSet;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const DEFAULT_BASE_CELL_SIZE_CM: u32 = 5;
 pub const DEFAULT_BUILDING_CELL_SIZE_CM: u32 = 50;
-pub const DEFAULT_GRID_CONFIG_PATH: ConfigPath = ConfigPath::new("config/grid.ron");
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default)]
@@ -96,7 +95,6 @@ pub enum GridConfigValidationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::foundation::config::{ConfigFormatLoader, RonConfigFormatLoader};
 
     #[test]
     fn default_config_uses_current_design_values() {
@@ -107,19 +105,6 @@ mod tests {
         assert_eq!(config.base_cell_size_meters(), 0.05);
         assert_eq!(config.building_cell_size_meters(), 0.5);
         assert_eq!(config.base_cells_per_building_cell(), 10);
-    }
-
-    #[test]
-    fn loads_default_grid_config_file() {
-        let bytes = std::fs::read(DEFAULT_GRID_CONFIG_PATH.file_system_path()).unwrap();
-
-        let config = RonConfigFormatLoader::<GridConfig>::default()
-            .load(&bytes)
-            .unwrap()
-            .validated()
-            .unwrap();
-
-        assert_eq!(config, GridConfig::default());
     }
 
     #[test]
