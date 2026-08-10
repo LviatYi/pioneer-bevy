@@ -1,12 +1,25 @@
-use crate::terrain::TerrainBounds;
+use crate::terrain::chunk::mvp_surface_chunks;
+use crate::terrain::mesh::extract_terrain_mesh;
+use crate::terrain::{LandformGenerator, TerrainBounds, TerrainChunkCache, TerrainChunkSamples};
 use bevy::prelude::*;
 
 pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, create_terrain_render_assets)
-            .add_systems(Update, sync_terrain);
+        app.init_resource::<LandformGenerator>()
+            .init_resource::<TerrainChunkCache>()
+            .init_resource::<TerrainRebuildRequest>()
+            .add_systems(Startup, create_terrain_render_assets)
+            .add_systems(
+                Update,
+                (
+                    queue_terrain_rebuild,
+                    clear_rendered_terrain,
+                    rebuild_terrain,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -14,26 +27,29 @@ impl Plugin for TerrainPlugin {
 pub struct TerrainRoot;
 
 #[derive(Component)]
-struct TerrainSurface;
+struct TerrainSurface {
+    mesh: Handle<Mesh>,
+}
 
 #[derive(Clone, Copy, Component, Debug, Eq, PartialEq)]
 struct RenderedTerrain {
     bounds: TerrainBounds,
+    landform_revision: u64,
 }
 
 #[derive(Resource)]
 struct TerrainRenderAssets {
-    surface_mesh: Handle<Mesh>,
     surface_material: Handle<StandardMaterial>,
 }
 
+#[derive(Default, Resource)]
+struct TerrainRebuildRequest(Option<RenderedTerrain>);
+
 fn create_terrain_render_assets(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.insert_resource(TerrainRenderAssets {
-        surface_mesh: meshes.add(Plane3d::default().mesh().size(1.0, 1.0)),
         surface_material: materials.add(StandardMaterial {
             base_color: Color::srgb(0.18, 0.32, 0.20),
             perceptual_roughness: 0.95,
@@ -42,19 +58,24 @@ fn create_terrain_render_assets(
     });
 }
 
-fn sync_terrain(
-    mut commands: Commands,
+fn queue_terrain_rebuild(
     bounds: Option<Res<TerrainBounds>>,
-    assets: Res<TerrainRenderAssets>,
+    landform: Res<LandformGenerator>,
     roots: Query<(Entity, &RenderedTerrain), With<TerrainRoot>>,
+    mut request: ResMut<TerrainRebuildRequest>,
 ) {
     let Some(bounds) = bounds else {
         return;
     };
 
-    let rendered = RenderedTerrain { bounds: *bounds };
+    let rendered = RenderedTerrain {
+        bounds: *bounds,
+        landform_revision: landform.revision(),
+    };
 
-    if roots.iter().count() == 1
+    if !bounds.is_changed()
+        && !landform.is_changed()
+        && roots.iter().count() == 1
         && roots
             .iter()
             .next()
@@ -63,15 +84,61 @@ fn sync_terrain(
         return;
     }
 
-    for (entity, _) in &roots {
-        commands.entity(entity).despawn();
-    }
-
-    spawn_terrain(&mut commands, &assets, rendered);
+    request.0 = Some(rendered);
 }
 
-fn spawn_terrain(commands: &mut Commands, assets: &TerrainRenderAssets, rendered: RenderedTerrain) {
-    let geometry = TerrainGeometry::new(rendered.bounds);
+fn clear_rendered_terrain(
+    mut commands: Commands,
+    request: Res<TerrainRebuildRequest>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut cache: ResMut<TerrainChunkCache>,
+    roots: Query<Entity, With<TerrainRoot>>,
+    surfaces: Query<&TerrainSurface>,
+) {
+    if request.0.is_none() {
+        return;
+    }
+
+    for surface in &surfaces {
+        meshes.remove(&surface.mesh);
+    }
+    for entity in &roots {
+        commands.entity(entity).despawn();
+    }
+    cache.clear();
+}
+
+fn rebuild_terrain(
+    mut commands: Commands,
+    mut request: ResMut<TerrainRebuildRequest>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut cache: ResMut<TerrainChunkCache>,
+    assets: Res<TerrainRenderAssets>,
+    landform: Res<LandformGenerator>,
+) {
+    let Some(rendered) = request.0.take() else {
+        return;
+    };
+
+    spawn_terrain(
+        &mut commands,
+        &mut meshes,
+        &mut cache,
+        &assets,
+        &landform,
+        rendered,
+    );
+}
+
+fn spawn_terrain(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    cache: &mut TerrainChunkCache,
+    assets: &TerrainRenderAssets,
+    landform: &LandformGenerator,
+    rendered: RenderedTerrain,
+) {
+    let terrain_origin = rendered.bounds.world_min();
     let root = commands
         .spawn((
             Name::new("Terrain"),
@@ -83,32 +150,85 @@ fn spawn_terrain(commands: &mut Commands, assets: &TerrainRenderAssets, rendered
         .id();
 
     commands.entity(root).with_children(|parent| {
-        parent.spawn((
-            Name::new("Terrain Surface"),
-            TerrainSurface,
-            Mesh3d(assets.surface_mesh.clone()),
-            MeshMaterial3d(assets.surface_material.clone()),
-            geometry.surface_transform,
-        ));
+        for (coord, cells) in mvp_surface_chunks(rendered.bounds) {
+            let samples = TerrainChunkSamples::sample(coord, terrain_origin, cells, landform);
+            let chunk_origin = samples.origin();
+            let mesh_data = match extract_terrain_mesh(&samples) {
+                Ok(mesh_data) => mesh_data,
+                Err(error) => {
+                    warn!(?coord, %error, "failed to generate terrain chunk mesh");
+                    cache.insert(samples);
+                    continue;
+                }
+            };
+            cache.insert(samples);
+
+            if mesh_data.is_empty() {
+                continue;
+            }
+
+            let mesh = meshes.add(mesh_data.into_mesh());
+            parent.spawn((
+                Name::new(format!("Terrain Chunk {:?}", coord.0)),
+                TerrainSurface { mesh: mesh.clone() },
+                Mesh3d(mesh),
+                MeshMaterial3d(assets.surface_material.clone()),
+                Transform::from_translation(chunk_origin),
+            ));
+        }
     });
 }
 
-#[derive(Debug, PartialEq)]
-struct TerrainGeometry {
-    surface_transform: Transform,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terrain::{FlatLandform, TerrainConfig};
 
-impl TerrainGeometry {
-    fn new(bounds: TerrainBounds) -> Self {
-        let world_min = bounds.world_min();
-        let world_max = bounds.world_max();
-        let center = (world_min + world_max) * 0.5;
-        let width = world_max.x - world_min.x;
-        let depth = world_max.z - world_min.z;
+    fn test_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .insert_resource(TerrainBounds::from_config(TerrainConfig::default()).unwrap())
+            .add_plugins(TerrainPlugin);
+        app
+    }
 
-        Self {
-            surface_transform: Transform::from_translation(center)
-                .with_scale(Vec3::new(width, 1.0, depth)),
-        }
+    fn component_count<T: Component>(world: &mut World) -> usize {
+        let mut query = world.query::<&T>();
+        query.iter(world).count()
+    }
+
+    fn single_entity<T: Component>(world: &mut World) -> Entity {
+        let mut query = world.query_filtered::<Entity, With<T>>();
+        query.single(world).unwrap()
+    }
+
+    #[test]
+    fn plugin_builds_cached_chunk_meshes_and_replaces_them_without_leaking() {
+        let mut app = test_app();
+        app.update();
+
+        assert_eq!(app.world().resource::<TerrainChunkCache>().len(), 8);
+        assert_eq!(component_count::<TerrainRoot>(app.world_mut()), 1);
+        assert_eq!(component_count::<TerrainSurface>(app.world_mut()), 4);
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 4);
+        let initial_root = single_entity::<TerrainRoot>(app.world_mut());
+
+        app.update();
+
+        assert_eq!(single_entity::<TerrainRoot>(app.world_mut()), initial_root);
+
+        app.world_mut()
+            .resource_mut::<LandformGenerator>()
+            .replace(FlatLandform {
+                surface_height: 4.0,
+            });
+        app.update();
+
+        assert_eq!(app.world().resource::<TerrainChunkCache>().len(), 8);
+        assert_eq!(component_count::<TerrainRoot>(app.world_mut()), 1);
+        assert_eq!(component_count::<TerrainSurface>(app.world_mut()), 4);
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 4);
+        assert_ne!(single_entity::<TerrainRoot>(app.world_mut()), initial_root);
     }
 }

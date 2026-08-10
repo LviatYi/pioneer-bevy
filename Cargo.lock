@@ -3287,6 +3287,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lin_alg"
+version = "1.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54862356f5aefd08c1280144613f13c3b71a6320f2c069555d4d16670c2ff7f3"
+dependencies = [
+ "num-traits",
+ "paste",
+]
+
+[[package]]
 name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3347,6 +3357,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
+]
+
+[[package]]
+name = "mcubes"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21305627b2a9263c95af711933a586d40a0ad97c232b28772133f8e6d59686f8"
+dependencies = [
+ "lin_alg",
 ]
 
 [[package]]
@@ -4005,6 +4024,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4055,6 +4080,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy",
+ "mcubes",
  "ron",
  "serde",
  "thiserror 2.0.18",

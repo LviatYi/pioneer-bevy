@@ -10,6 +10,14 @@
 
 MVP 地貌算法将提供一个平坦算法。
 
+### 当前初步实现
+
+- `LandformSample` 作为可插拔的三维标量场接口，默认使用地表高度为 `y = 0` 的 `FlatLandform`。
+- 以 `1m` 间距在 `16³` Cell 的三维 Chunk 中采样，相邻 Chunk 的采样位置由整数坐标统一推导。
+- `TerrainChunkCache` 缓存已调度 Chunk 的 `17³`（边缘 Chunk 除外）采样值。
+- 使用 Marching Cubes 提取零等值面，并生成带索引和法线的独立 Chunk Mesh。
+- 当前只调度覆盖有限地图 XZ 范围、位于 `y = 0` 上下各一层的 Chunk；尚未实现随玩家移动的流式调度、玩家修改叠加和碰撞体生成。
+
 ## 地质 Geology
 
 地质描述星球内部的结构和组成，包括矿脉、岩层等。
