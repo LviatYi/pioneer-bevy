@@ -9,17 +9,8 @@ impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LandformGenerator>()
             .init_resource::<TerrainChunkCache>()
-            .init_resource::<TerrainRebuildRequest>()
             .add_systems(Startup, create_terrain_render_assets)
-            .add_systems(
-                Update,
-                (
-                    queue_terrain_rebuild,
-                    clear_rendered_terrain,
-                    rebuild_terrain,
-                )
-                    .chain(),
-            );
+            .add_systems(Update, sync_terrain);
     }
 }
 
@@ -31,18 +22,10 @@ struct TerrainSurface {
     mesh: Handle<Mesh>,
 }
 
-#[derive(Clone, Copy, Component, Debug, Eq, PartialEq)]
-struct RenderedTerrain {
-    config: TerrainConfig,
-}
-
 #[derive(Resource)]
 struct TerrainRenderAssets {
     surface_material: Handle<StandardMaterial>,
 }
-
-#[derive(Default, Resource)]
-struct TerrainRebuildRequest(Option<RenderedTerrain>);
 
 fn create_terrain_render_assets(
     mut commands: Commands,
@@ -57,37 +40,21 @@ fn create_terrain_render_assets(
     });
 }
 
-fn queue_terrain_rebuild(
-    config: Res<TerrainConfig>,
-    landform: Res<LandformGenerator>,
-    roots: Query<(Entity, &RenderedTerrain), With<TerrainRoot>>,
-    mut request: ResMut<TerrainRebuildRequest>,
-) {
-    let rendered = RenderedTerrain { config: *config };
-
-    if !config.is_changed()
-        && !landform.is_changed()
-        && roots.iter().count() == 1
-        && roots
-            .iter()
-            .next()
-            .is_some_and(|(_, current)| *current == rendered)
-    {
-        return;
-    }
-
-    request.0 = Some(rendered);
-}
-
-fn clear_rendered_terrain(
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Bevy systems express resource and query access through function parameters"
+)]
+fn sync_terrain(
     mut commands: Commands,
-    request: Res<TerrainRebuildRequest>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut cache: ResMut<TerrainChunkCache>,
+    assets: Res<TerrainRenderAssets>,
+    config: Res<TerrainConfig>,
+    landform: Res<LandformGenerator>,
     roots: Query<Entity, With<TerrainRoot>>,
     surfaces: Query<&TerrainSurface>,
 ) {
-    if request.0.is_none() {
+    if !config.is_changed() && !landform.is_changed() && roots.iter().count() == 1 {
         return;
     }
 
@@ -98,27 +65,14 @@ fn clear_rendered_terrain(
         commands.entity(entity).despawn();
     }
     cache.clear();
-}
-
-fn rebuild_terrain(
-    mut commands: Commands,
-    mut request: ResMut<TerrainRebuildRequest>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut cache: ResMut<TerrainChunkCache>,
-    assets: Res<TerrainRenderAssets>,
-    landform: Res<LandformGenerator>,
-) {
-    let Some(rendered) = request.0.take() else {
-        return;
-    };
 
     spawn_terrain(
         &mut commands,
         &mut meshes,
         &mut cache,
         &assets,
+        *config,
         &landform,
-        rendered,
     );
 }
 
@@ -127,22 +81,21 @@ fn spawn_terrain(
     meshes: &mut Assets<Mesh>,
     cache: &mut TerrainChunkCache,
     assets: &TerrainRenderAssets,
+    config: TerrainConfig,
     landform: &LandformGenerator,
-    rendered: RenderedTerrain,
 ) {
-    let terrain_origin = rendered.config.world_min();
+    let terrain_origin = config.world_min();
     let root = commands
         .spawn((
             Name::new("Terrain"),
             TerrainRoot,
-            rendered,
             Transform::default(),
             Visibility::default(),
         ))
         .id();
 
     commands.entity(root).with_children(|parent| {
-        for (coord, cells) in mvp_surface_chunks(rendered.config) {
+        for (coord, cells) in mvp_surface_chunks(config) {
             let samples = TerrainChunkSamples::sample(coord, terrain_origin, cells, landform);
             let chunk_origin = samples.origin();
             let mesh_data = match extract_terrain_mesh(&samples) {
