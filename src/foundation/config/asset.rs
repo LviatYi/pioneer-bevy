@@ -422,7 +422,7 @@ where
         );
         let output = O::produce(&config).unwrap_or_else(|error| {
             panic!(
-                "config `{}` failed to produce its resource output: {error}",
+                "config `{}` failed to produce its resource output when init build: {error}",
                 source.path().asset_path()
             )
         });
