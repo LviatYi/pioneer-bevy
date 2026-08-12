@@ -105,8 +105,9 @@ fn align_triangle_winding_with_normals(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terrain::landform_algorithm::flat::FlatLandform;
     use crate::terrain::{
-        FlatLandform, LandformGenerator, LandformSample, TERRAIN_CHUNK_CELLS, TerrainChunkCoord,
+        LandformGenerator, LandformSample, TERRAIN_CHUNK_CELLS, TerrainChunkCoord,
     };
     use bevy::prelude::UVec3;
 
@@ -162,7 +163,7 @@ mod tests {
         assert!(!mesh.is_empty());
         for (position, normal) in mesh.positions.iter().zip(&mesh.normals) {
             let position = Vec3::from_array(*position);
-            assert!((SlopedLandform.sample(position)).abs() < 0.0001);
+            assert!(SlopedLandform.sample(position).abs() < 0.0001);
             assert!(Vec3::from_array(*normal).dot(expected_normal) > 0.99);
         }
     }

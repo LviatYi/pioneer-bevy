@@ -34,7 +34,6 @@ struct TerrainSurface {
 #[derive(Clone, Copy, Component, Debug, Eq, PartialEq)]
 struct RenderedTerrain {
     config: TerrainConfig,
-    landform_revision: u64,
 }
 
 #[derive(Resource)]
@@ -64,10 +63,7 @@ fn queue_terrain_rebuild(
     roots: Query<(Entity, &RenderedTerrain), With<TerrainRoot>>,
     mut request: ResMut<TerrainRebuildRequest>,
 ) {
-    let rendered = RenderedTerrain {
-        config: *config,
-        landform_revision: landform.revision(),
-    };
+    let rendered = RenderedTerrain { config: *config };
 
     if !config.is_changed()
         && !landform.is_changed()
@@ -178,7 +174,8 @@ fn spawn_terrain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terrain::{FlatLandform, TerrainConfig};
+    use crate::terrain::TerrainConfig;
+    use crate::terrain::landform_algorithm::flat::FlatLandform;
 
     fn test_app() -> App {
         let mut app = App::new();
@@ -214,9 +211,8 @@ mod tests {
 
         assert_eq!(single_entity::<TerrainRoot>(app.world_mut()), initial_root);
 
-        app.world_mut()
-            .resource_mut::<LandformGenerator>()
-            .replace(FlatLandform {
+        *app.world_mut().resource_mut::<LandformGenerator>() =
+            LandformGenerator::new(FlatLandform {
                 surface_height: 4.0,
             });
         app.update();

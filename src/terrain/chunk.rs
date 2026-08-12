@@ -153,7 +153,8 @@ pub(crate) fn mvp_surface_chunks(config: TerrainConfig) -> Vec<(TerrainChunkCoor
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terrain::{FlatLandform, LandformGenerator, TerrainConfig};
+    use crate::terrain::landform_algorithm::flat::FlatLandform;
+    use crate::terrain::{LandformGenerator, TerrainConfig};
 
     #[test]
     fn chunk_has_one_more_sample_than_cell_on_each_axis() {
