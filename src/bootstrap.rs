@@ -16,7 +16,6 @@ pub fn config_bootstrap(app: &mut App) -> &mut App {
     .add_plugins(
         RonConfigPlugin::<TerrainConfig>::new(DEFAULT_TERRAIN_CONFIG_PATH)
             .with_validation()
-            .with_runtime_transformer()
             .fallback_to_default(),
     )
 }

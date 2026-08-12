@@ -1,6 +1,6 @@
 use crate::terrain::chunk::mvp_surface_chunks;
 use crate::terrain::mesh::extract_terrain_mesh;
-use crate::terrain::{LandformGenerator, TerrainBounds, TerrainChunkCache, TerrainChunkSamples};
+use crate::terrain::{LandformGenerator, TerrainChunkCache, TerrainChunkSamples, TerrainConfig};
 use bevy::prelude::*;
 
 pub struct TerrainPlugin;
@@ -33,7 +33,7 @@ struct TerrainSurface {
 
 #[derive(Clone, Copy, Component, Debug, Eq, PartialEq)]
 struct RenderedTerrain {
-    bounds: TerrainBounds,
+    config: TerrainConfig,
     landform_revision: u64,
 }
 
@@ -59,21 +59,17 @@ fn create_terrain_render_assets(
 }
 
 fn queue_terrain_rebuild(
-    bounds: Option<Res<TerrainBounds>>,
+    config: Res<TerrainConfig>,
     landform: Res<LandformGenerator>,
     roots: Query<(Entity, &RenderedTerrain), With<TerrainRoot>>,
     mut request: ResMut<TerrainRebuildRequest>,
 ) {
-    let Some(bounds) = bounds else {
-        return;
-    };
-
     let rendered = RenderedTerrain {
-        bounds: *bounds,
+        config: *config,
         landform_revision: landform.revision(),
     };
 
-    if !bounds.is_changed()
+    if !config.is_changed()
         && !landform.is_changed()
         && roots.iter().count() == 1
         && roots
@@ -138,7 +134,7 @@ fn spawn_terrain(
     landform: &LandformGenerator,
     rendered: RenderedTerrain,
 ) {
-    let terrain_origin = rendered.bounds.world_min();
+    let terrain_origin = rendered.config.world_min();
     let root = commands
         .spawn((
             Name::new("Terrain"),
@@ -150,7 +146,7 @@ fn spawn_terrain(
         .id();
 
     commands.entity(root).with_children(|parent| {
-        for (coord, cells) in mvp_surface_chunks(rendered.bounds) {
+        for (coord, cells) in mvp_surface_chunks(rendered.config) {
             let samples = TerrainChunkSamples::sample(coord, terrain_origin, cells, landform);
             let chunk_origin = samples.origin();
             let mesh_data = match extract_terrain_mesh(&samples) {
@@ -188,7 +184,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
-            .insert_resource(TerrainBounds::from_config(TerrainConfig::default()).unwrap())
+            .insert_resource(TerrainConfig::default())
             .add_plugins(TerrainPlugin);
         app
     }

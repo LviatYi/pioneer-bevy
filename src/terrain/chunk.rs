@@ -1,4 +1,4 @@
-use crate::terrain::{LandformSample, TerrainBounds};
+use crate::terrain::{LandformSample, TerrainConfig};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::{IVec3, Resource, UVec3, Vec3};
 
@@ -125,8 +125,8 @@ impl TerrainChunkSamples {
 ///
 /// Two Y layers around zero provide an initial generation volume for both
 /// below-ground structures and positive-height landforms.
-pub(crate) fn mvp_surface_chunks(bounds: TerrainBounds) -> Vec<(TerrainChunkCoord, UVec3)> {
-    let side = bounds.side_length_meters();
+pub(crate) fn mvp_surface_chunks(config: TerrainConfig) -> Vec<(TerrainChunkCoord, UVec3)> {
+    let side = config.side_length_meters;
     let chunks_per_side = side.div_ceil(TERRAIN_CHUNK_CELLS);
     let mut chunks = Vec::with_capacity((chunks_per_side * chunks_per_side * 2) as usize);
 
@@ -200,11 +200,10 @@ mod tests {
 
     #[test]
     fn edge_chunks_are_trimmed_to_terrain_bounds() {
-        let bounds = TerrainBounds::from_config(TerrainConfig {
+        let config = TerrainConfig {
             side_length_meters: 17,
-        })
-        .unwrap();
-        let chunks = mvp_surface_chunks(bounds);
+        };
+        let chunks = mvp_surface_chunks(config);
 
         assert_eq!(chunks.len(), 8);
         assert_eq!(chunks[0].1, UVec3::new(16, 16, 16));
