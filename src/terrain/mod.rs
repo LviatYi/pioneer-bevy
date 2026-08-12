@@ -1,6 +1,6 @@
 mod chunk;
 mod config;
-mod field;
+mod landform;
 mod mesh;
 mod render;
 
@@ -9,5 +9,5 @@ pub use chunk::{
     TerrainChunkSamples,
 };
 pub use config::{TerrainConfig, TerrainConfigValidationError};
-pub use field::{FlatLandform, LandformGenerator, LandformSample};
+pub use landform::{FlatLandform, LandformGenerator, LandformSample};
 pub use render::TerrainPlugin;
