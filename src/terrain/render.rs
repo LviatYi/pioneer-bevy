@@ -10,7 +10,12 @@ impl Plugin for TerrainPlugin {
         app.init_resource::<LandformGenerator>()
             .init_resource::<TerrainChunkCache>()
             .add_systems(Startup, create_terrain_render_assets)
-            .add_systems(Update, sync_terrain);
+            .add_systems(
+                Update,
+                (clean_terrain, spawn_terrain)
+                    .chain()
+                    .run_if(terrain_needs_reset),
+            );
     }
 }
 
@@ -40,24 +45,21 @@ fn create_terrain_render_assets(
     });
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Bevy systems express resource and query access through function parameters"
-)]
-fn sync_terrain(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut cache: ResMut<TerrainChunkCache>,
-    assets: Res<TerrainRenderAssets>,
+fn terrain_needs_reset(
     config: Res<TerrainConfig>,
     landform: Res<LandformGenerator>,
     roots: Query<Entity, With<TerrainRoot>>,
+) -> bool {
+    config.is_changed() || landform.is_changed() || roots.single().is_err()
+}
+
+fn clean_terrain(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut cache: ResMut<TerrainChunkCache>,
+    roots: Query<Entity, With<TerrainRoot>>,
     surfaces: Query<&TerrainSurface>,
 ) {
-    if !config.is_changed() && !landform.is_changed() && roots.iter().count() == 1 {
-        return;
-    }
-
     for surface in &surfaces {
         meshes.remove(&surface.mesh);
     }
@@ -65,24 +67,15 @@ fn sync_terrain(
         commands.entity(entity).despawn();
     }
     cache.clear();
-
-    spawn_terrain(
-        &mut commands,
-        &mut meshes,
-        &mut cache,
-        &assets,
-        *config,
-        &landform,
-    );
 }
 
 fn spawn_terrain(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    cache: &mut TerrainChunkCache,
-    assets: &TerrainRenderAssets,
-    config: TerrainConfig,
-    landform: &LandformGenerator,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut cache: ResMut<TerrainChunkCache>,
+    assets: Res<TerrainRenderAssets>,
+    config: Res<TerrainConfig>,
+    landform: Res<LandformGenerator>,
 ) {
     let terrain_origin = config.world_min();
     let root = commands
@@ -95,8 +88,9 @@ fn spawn_terrain(
         .id();
 
     commands.entity(root).with_children(|parent| {
-        for (coord, cells) in mvp_surface_chunks(config) {
-            let samples = TerrainChunkSamples::sample(coord, terrain_origin, cells, landform);
+        for (coord, cells) in mvp_surface_chunks(&config) {
+            let samples =
+                TerrainChunkSamples::sample(coord, terrain_origin, cells, landform.as_ref());
             let chunk_origin = samples.origin();
             let mesh_data = match extract_terrain_mesh(&samples) {
                 Ok(mesh_data) => mesh_data,
