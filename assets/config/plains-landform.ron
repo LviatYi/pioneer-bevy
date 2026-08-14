@@ -1,0 +1,9 @@
+(
+    seed: 0,
+    base_height_meters: 0.0,
+    amplitude_meters: 2.0,
+    wavelength_meters: 64.0,
+    octaves: 4,
+    lacunarity: 2.0,
+    persistence: 0.42,
+)

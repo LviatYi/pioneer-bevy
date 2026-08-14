@@ -8,11 +8,11 @@
 
 体验目标在于地貌多样性，具备丰富的地形类型和变化。因此应采用接受可插入式的地貌生成算法的实现方案。
 
-MVP 地貌算法将提供一个平坦算法。
+MVP 地貌算法提供平坦算法，并默认使用可配置的 Perlin fBm 平原算法。
 
 ### 当前初步实现
 
-- `LandformSample` 作为可插拔的三维标量场接口，默认使用地表高度为 `y = 0` 的 `FlatLandform`。
+- `LandformSample` 作为可插拔的三维标量场接口；应用默认从 `config/plains-landform.ron` 构造基于 noise-rs `Fbm<Perlin>` 的 `PlainsLandform`。
 - 以 `1m` 间距在 `16³` Cell 的三维 Chunk 中采样，相邻 Chunk 的采样位置由整数坐标统一推导。
 - `TerrainChunkCache` 缓存已调度 Chunk 的 `17³`（边缘 Chunk 除外）采样值。
 - 使用 Marching Cubes 提取零等值面，并生成带索引和法线的独立 Chunk Mesh。

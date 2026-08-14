@@ -153,14 +153,13 @@ pub(crate) fn mvp_surface_chunks(config: &TerrainConfig) -> Vec<(TerrainChunkCoo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terrain::landform_algorithm::flat::FlatLandform;
+    use crate::terrain::landform_algorithm::plains::{PlainsLandform, PlainsLandformConfig};
     use crate::terrain::{LandformGenerator, TerrainConfig};
 
     #[test]
     fn adjacent_chunks_share_identical_boundary_samples() {
-        let field = LandformGenerator::new(FlatLandform {
-            surface_height: 0.25,
-        });
+        let field =
+            LandformGenerator::new(PlainsLandform::from_config(PlainsLandformConfig::default()));
         let terrain_origin = Vec3::new(-16.0, 0.0, -16.0);
         let left = TerrainChunkSamples::sample(
             TerrainChunkCoord::new(0, -1, 0),
