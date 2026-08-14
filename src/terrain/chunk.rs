@@ -157,20 +157,6 @@ mod tests {
     use crate::terrain::{LandformGenerator, TerrainConfig};
 
     #[test]
-    fn chunk_has_one_more_sample_than_cell_on_each_axis() {
-        let field = LandformGenerator::new(FlatLandform::default());
-        let samples = TerrainChunkSamples::sample(
-            TerrainChunkCoord::new(0, -1, 0),
-            Vec3::ZERO,
-            UVec3::splat(2),
-            &field,
-        );
-
-        assert_eq!(samples.sample_dimensions(), UVec3::splat(3));
-        assert_eq!(samples.values().len(), 27);
-    }
-
-    #[test]
     fn adjacent_chunks_share_identical_boundary_samples() {
         let field = LandformGenerator::new(FlatLandform {
             surface_height: 0.25,

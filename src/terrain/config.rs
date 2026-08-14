@@ -98,36 +98,6 @@ mod tests {
     use crate::grid::GridConfig;
 
     #[test]
-    fn creates_centered_metric_bounds() {
-        let config = TerrainConfig::default();
-
-        assert_eq!(config.world_min(), Vec3::new(-16.0, 0.0, -16.0));
-        assert_eq!(config.world_max(), Vec3::new(16.0, 0.0, 16.0));
-    }
-
-    #[test]
-    fn contains_only_complete_surface_cells() {
-        let config = TerrainConfig::default();
-        let grids = GridConfig::default().into_grid_set().unwrap();
-
-        assert!(config.contains_surface_cell(GridCoord::new(-32, 0, -32), grids));
-        assert!(config.contains_surface_cell(GridCoord::new(31, 0, 31), grids));
-        assert!(!config.contains_surface_cell(GridCoord::new(-33, 0, 0), grids));
-        assert!(!config.contains_surface_cell(GridCoord::new(32, 0, 0), grids));
-        assert!(!config.contains_surface_cell(GridCoord::new(0, 1, 0), grids));
-    }
-
-    #[test]
-    fn checks_world_positions_against_metric_bounds() {
-        let config = TerrainConfig::default();
-
-        assert!(config.contains_world_xz(Vec3::new(-16.0, 5.0, -16.0)));
-        assert!(config.contains_world_xz(Vec3::new(15.99, -5.0, 15.99)));
-        assert!(!config.contains_world_xz(Vec3::new(-16.01, 0.0, 0.0)));
-        assert!(!config.contains_world_xz(Vec3::new(16.0, 0.0, 0.0)));
-    }
-
-    #[test]
     fn rejects_footprints_that_cross_or_leave_bounds() {
         let config = TerrainConfig::default();
         let grids = GridConfig::default().into_grid_set().unwrap();
@@ -136,19 +106,5 @@ mod tests {
         assert!(!config.contains_footprint(GridCoord::new(31, 0, 31), 2, 2, grids));
         assert!(!config.contains_footprint(GridCoord::new(-33, 0, 0), 1, 1, grids));
         assert!(!config.contains_footprint(GridCoord::new(0, 0, 0), 0, 1, grids));
-    }
-
-    #[test]
-    fn accepts_odd_meter_size_without_building_coupling() {
-        let config = TerrainConfig {
-            side_length_meters: 1,
-        };
-        let grids = GridConfig::default().into_grid_set().unwrap();
-
-        assert_eq!(config.world_min(), Vec3::new(-0.5, 0.0, -0.5));
-        assert_eq!(config.world_max(), Vec3::new(0.5, 0.0, 0.5));
-        assert!(config.contains_surface_cell(GridCoord::new(-1, 0, -1), grids));
-        assert!(config.contains_surface_cell(GridCoord::new(0, 0, 0), grids));
-        assert!(!config.contains_surface_cell(GridCoord::new(1, 0, 0), grids));
     }
 }

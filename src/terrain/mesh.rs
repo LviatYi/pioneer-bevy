@@ -121,17 +121,11 @@ mod tests {
     }
 
     #[test]
-    fn marching_cubes_extracts_flat_zero_surface() {
+    fn extracts_flat_surface_with_air_facing_normals_and_winding() {
         let mesh = extract_terrain_mesh(&flat_chunk()).unwrap();
 
         assert!(!mesh.is_empty());
         assert!(mesh.positions.iter().all(|position| position[1] == 16.0));
-    }
-
-    #[test]
-    fn flat_surface_normals_and_winding_point_towards_air() {
-        let mesh = extract_terrain_mesh(&flat_chunk()).unwrap();
-
         assert!(mesh.normals.iter().all(|normal| normal[1] > 0.99));
         for triangle in mesh.indices.chunks_exact(3) {
             let a = Vec3::from_array(mesh.positions[triangle[0] as usize]);

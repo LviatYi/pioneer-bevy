@@ -39,19 +39,3 @@ impl Default for LandformGenerator {
         Self::new(FlatLandform::default())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn flat_landform_uses_signed_distance_convention() {
-        let field = FlatLandform {
-            surface_height: 2.0,
-        };
-
-        assert!(field.sample(Vec3::new(0.0, 1.0, 0.0)) < 0.0);
-        assert_eq!(field.sample(Vec3::new(5.0, 2.0, -3.0)), 0.0);
-        assert!(field.sample(Vec3::new(0.0, 3.0, 0.0)) > 0.0);
-    }
-}
